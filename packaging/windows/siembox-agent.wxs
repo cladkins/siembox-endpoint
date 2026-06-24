@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WiX v4/v5 source for the SIEMBox EDR agent MSI.
+     Build: wix build siembox-agent.wxs -d Version=1.2.3 -d BinDir=build -o out.msi
+     Installs the agent to Program Files\SIEMBox, seeds a config template under
+     ProgramData\SIEMBox\agent, registers a Windows service (manual start until
+     configured), and adds the install dir to the system PATH. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="SIEMBox EDR Agent"
+           Manufacturer="cladkins"
+           Version="$(var.Version)"
+           UpgradeCode="7F3B2A1C-5D4E-4F6A-9B8C-1234567890AB"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="SIEMBox" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataVendor" Name="SIEMBox">
+        <Directory Id="DataAgent" Name="agent" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="SIEMBox EDR Agent" Level="1">
+      <Component Directory="INSTALLFOLDER" Bitness="always64">
+        <File Id="AgentExe" Source="$(var.BinDir)\siembox-agent.exe" KeyPath="yes" />
+        <ServiceInstall Id="SvcInstall"
+                        Name="siembox-agent"
+                        DisplayName="SIEMBox EDR Agent"
+                        Description="SIEMBox EDR endpoint agent: vulnerability scanning and threat detection."
+                        Type="ownProcess"
+                        Start="demand"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Arguments=" -dir &quot;C:\ProgramData\SIEMBox\agent&quot; run" />
+        <ServiceControl Id="SvcControl"
+                        Name="siembox-agent"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+        <Environment Id="PathEnv"
+                     Name="PATH"
+                     Value="[INSTALLFOLDER]"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+
+      <Component Directory="DataAgent" Bitness="always64">
+        <File Id="ConfTemplate" Source="packaging\agent.json.template" KeyPath="yes" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>
