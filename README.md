@@ -131,12 +131,15 @@ Service registration adapts to the host: systemd or SysV (Linux), launchd
 A lightweight status-bar app (`SIEMBox Menu Bar.app`, built in Go with
 `fyne.io/systray`) provides a GUI for the agent: service status, **Run
 Vulnerability Scan**, **Run Detection Check** (with last-run finding/detection
-counts + notifications), and reveal-config. It shells out to the installed
-`siembox-agent` CLI, so **install the agent package first**, then drag
-`SIEMBox Menu Bar.app` (from the release `SIEMBox-Menu-Bar-*-macos.zip`) into
-`/Applications` and launch it. It runs menu-bar-only (no Dock icon). Scans run
-as your user against the scoped software locations, so no `sudo` is needed for a
-manual scan. (Unsigned for now: first launch may need right-click → Open.)
+counts + notifications), and reveal-config. It runs menu-bar-only (no Dock icon)
+and shells out to the `siembox-agent` CLI; scans run as your user against the
+scoped software locations, so no `sudo` is needed for a manual scan.
+
+The macOS **`.pkg` installs it automatically** to `/Applications`, starts it
+right away, and registers a LaunchAgent so it relaunches at login — no extra
+download, and (since pkg payloads aren't quarantined) no Gatekeeper prompt. For
+manual / non-pkg installs, the standalone `SIEMBox-Menu-Bar-*-macos.zip` release
+asset still works: unzip, drag to `/Applications`, right-click → Open.
 
 ## Test on an endpoint (no server required)
 

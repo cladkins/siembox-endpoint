@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Per-user LaunchAgent: starts the SIEMBox menu bar app at login. Installed to
+     /Library/LaunchAgents by the .pkg. Only loads in a GUI (Aqua) session. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.siembox.menubar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/SIEMBox Menu Bar.app/Contents/MacOS/siembox-tray</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+</dict>
+</plist>
