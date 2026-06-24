@@ -24,6 +24,12 @@ type Settings struct {
 	CACertPath string `json:"ca_cert_path,omitempty"`
 	// InsecureSkipVerify disables TLS verification. Strongly discouraged; for lab use only.
 	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
+	// GrypeBinary is the grype executable to use (name on PATH or absolute path).
+	// Empty defaults to "grype".
+	GrypeBinary string `json:"grype_binary,omitempty"`
+	// VulnScanTarget is the grype source to scan. Empty defaults to "dir:/"
+	// (catalog the host's installed packages).
+	VulnScanTarget string `json:"vuln_scan_target,omitempty"`
 }
 
 // Identity is the persisted result of enrollment.

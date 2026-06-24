@@ -18,6 +18,7 @@ import (
 	"github.com/cladkins/siembox-edr/internal/config"
 	"github.com/cladkins/siembox-edr/internal/transport"
 	"github.com/cladkins/siembox-edr/internal/version"
+	"github.com/cladkins/siembox-edr/internal/vuln"
 )
 
 func main() {
@@ -68,8 +69,17 @@ func run(dir string, log *slog.Logger) error {
 		return err
 	}
 
-	// Future phases swap NoopScanner/NoopEngine for Grype and osquery+Sigma
-	// here via a.WithScanner(...) / a.WithEngine(...).
+	// Vulnerability scanning: use grype if its binary is available, otherwise
+	// fall back to the noop scanner so the agent still runs.
+	grype := vuln.NewGrypeScanner(state.Settings.GrypeBinary, state.Settings.VulnScanTarget)
+	if grype.Available() {
+		a.WithScanner(grype)
+		log.Info("vulnerability scanning enabled", "scanner", "grype")
+	} else {
+		log.Warn("grype not found on PATH; vulnerability scanning disabled (install grype to enable)")
+	}
+
+	// Future phase swaps NoopEngine for osquery+Sigma via a.WithEngine(...).
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

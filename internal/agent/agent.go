@@ -101,6 +101,10 @@ func (a *Agent) Run(ctx context.Context) error {
 		go func() { defer wg.Done(); fn() }()
 	}
 
+	// Run an initial vulnerability scan shortly after startup so a newly
+	// enrolled endpoint surfaces vuln data without waiting for the first tick.
+	run(func() { a.runVulnScan(ctx) })
+
 	cfg := a.state.Identity.Config
 	run(func() { a.tick(ctx, sec(cfg.HeartbeatIntervalSec, defaultHeartbeatSec), a.heartbeat) })
 	run(func() { a.tick(ctx, sec(cfg.ConfigPollIntervalSec, defaultConfigPollSec), a.pollConfig) })

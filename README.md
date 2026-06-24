@@ -22,14 +22,24 @@ Phased build (see `docs/EDR_API.md` for the wire contract):
 
 - [x] **Phase 1 — agent skeleton**: enrollment, heartbeat, config polling,
   inventory reporting, offline-resilient spool transport, signal handling.
-- [ ] **Phase 2 — vulnerability scanning** (Syft + Grype).
+- [x] **Phase 2 — vulnerability scanning**: Grype integration (runs the bundled
+  `grype` binary, parses JSON, maps to the SIEMBox vuln model, ships findings;
+  initial scan on startup + on schedule).
 - [ ] **Phase 3 — detection** (bundled osquery + `sigma-go` + default rules).
 - [ ] **Phase 4 — packaging & hardening** (goreleaser installers, service
   install, secure key storage).
 
-The vuln and detection modules currently ship as no-op implementations behind
-stable interfaces (`internal/vuln`, `internal/detect`); the agent already runs
-end-to-end and will report inventory to a SIEMBox server.
+The detection module currently ships as a no-op implementation behind a stable
+interface (`internal/detect`); the agent already runs end-to-end, reports
+inventory, and scans for vulnerabilities.
+
+### Vulnerability scanning
+
+The agent shells out to [`grype`](https://github.com/anchore/grype) (shipped
+alongside the agent by the installer; auto-installs its own CVE database on
+first run). If `grype` is not found on `PATH`, vuln scanning is skipped and the
+rest of the agent still runs. Configure via `grype_binary` and
+`vuln_scan_target` in `agent.json` (defaults: `grype`, `dir:/`).
 
 ## How it talks to SIEMBox
 
