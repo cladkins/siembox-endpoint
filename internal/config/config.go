@@ -71,6 +71,22 @@ func DefaultDir() string {
 	}
 }
 
+// LoadSettingsOnly reads just the settings file, without requiring the
+// server_url/enrollment fields. Used by one-shot commands (scan/check) that run
+// locally and never contact the server. A missing file yields zero-value
+// settings (callers fall back to PATH defaults).
+func LoadSettingsOnly(dir string) (Settings, error) {
+	var s Settings
+	raw, err := os.ReadFile(filepath.Join(dir, settingsFile))
+	if err != nil {
+		return s, err
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return s, fmt.Errorf("parse settings: %w", err)
+	}
+	return s, nil
+}
+
 // Load reads settings and (if present) identity from dir. A missing identity
 // file is not an error: it simply means the agent has not enrolled yet.
 func Load(dir string) (*State, error) {

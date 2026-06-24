@@ -93,12 +93,36 @@ func (e *SigmaEngine) Run(ctx context.Context, out chan<- models.Event) error {
 
 // evaluate runs all rules against one record, emitting an event per match.
 func (e *SigmaEngine) evaluate(ctx context.Context, rec telemetry.Record, out chan<- models.Event) {
+	for _, ev := range e.matchRecord(ctx, rec) {
+		select {
+		case <-ctx.Done():
+			return
+		case out <- ev:
+		}
+	}
+}
+
+// Evaluate runs the loaded rules against a batch of records and returns all
+// resulting detection events. Used by one-shot "check" mode, which needs no
+// telemetry source or server.
+func (e *SigmaEngine) Evaluate(ctx context.Context, records []telemetry.Record) []models.Event {
+	var out []models.Event
+	for _, rec := range records {
+		out = append(out, e.matchRecord(ctx, rec)...)
+	}
+	return out
+}
+
+// matchRecord evaluates every loaded rule against a single record and returns
+// the detection events for the rules that matched.
+func (e *SigmaEngine) matchRecord(ctx context.Context, rec telemetry.Record) []models.Event {
 	event := buildEvent(rec)
 
 	e.mu.RLock()
 	rules := e.rules
 	e.mu.RUnlock()
 
+	var out []models.Event
 	for _, cr := range rules {
 		res, err := cr.eval.Matches(ctx, event)
 		if err != nil {
@@ -110,12 +134,9 @@ func (e *SigmaEngine) evaluate(ctx context.Context, rec telemetry.Record, out ch
 		if !res.Match {
 			continue
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case out <- toEvent(cr.rule, rec):
-		}
+		out = append(out, toEvent(cr.rule, rec))
 	}
+	return out
 }
 
 // buildEvent turns a telemetry record into the field map Sigma matches against:

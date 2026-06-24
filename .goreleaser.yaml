@@ -1,0 +1,69 @@
+version: 2
+project_name: siembox-edr
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: siembox-agent
+    main: ./cmd/siembox-agent
+    binary: siembox-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/cladkins/siembox-edr/internal/version.Version={{ .Version }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE*
+      - docs/**
+      - packaging/**
+      - scripts/**
+
+# Linux native packages. The post-install hook fetches osquery + grype and
+# registers the service; see packaging/linux/postinstall.sh.
+nfpms:
+  - id: linux-packages
+    package_name: siembox-agent
+    formats:
+      - deb
+      - rpm
+    maintainer: cladkins
+    description: "SIEMBox EDR endpoint agent: vulnerability scanning and threat detection."
+    license: MIT
+    bindir: /usr/bin
+    dependencies:
+      - curl
+    contents:
+      - src: packaging/agent.json.template
+        dst: /etc/siembox-agent/agent.json.template
+        type: config
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      preremove: packaging/linux/preremove.sh
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+release:
+  draft: false

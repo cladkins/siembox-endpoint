@@ -29,11 +29,14 @@ Phased build (see `docs/EDR_API.md` for the wire contract):
   agent drives `osqueryd` with a scheduled query pack, tails the results, and
   evaluates each row against an embedded default Sigma rule pack plus any rules
   the server pushes; matches ship as detections.
-- [ ] **Phase 4 — packaging & hardening** (goreleaser installers, service
-  install, secure key storage).
+- [x] **Phase 4 — packaging & service**: cross-platform service integration
+  (systemd/SysV/launchd/Windows SCM via `kardianos/service`), `install`/`start`/
+  `stop`/`status` subcommands, standalone `scan`/`check` test commands,
+  goreleaser + nfpm artifacts (`.deb`/`.rpm`/archives), and OS install scripts.
 
 The agent runs end-to-end: it enrolls, reports inventory, scans for
-vulnerabilities, and detects suspicious host activity.
+vulnerabilities, and detects suspicious host activity — installable as a managed
+service on Linux, macOS, and Windows.
 
 ### Vulnerability scanning
 
@@ -68,17 +71,22 @@ SIEMBox already collects.
 > The server-side `/api/edr/*` implementation lives in the `cladkins/SIEMBOX`
 > repo. This repo owns the agent and the shared API contract.
 
-## Build & test
+## Install
 
+**Linux (one-liner):**
 ```sh
-make build        # build ./bin/siembox-agent for the host platform
-make test         # go test ./...
-make cross        # cross-compile for linux/darwin/windows (amd64+arm64)
+curl -sSfL https://raw.githubusercontent.com/cladkins/SIEMBOX-EDR/main/scripts/install.sh | sudo sh
 ```
+Or install the native package (`.deb`/`.rpm`) from a release. Both fetch osquery
++ grype if missing and register the service. macOS/Windows installers live under
+[`packaging/`](packaging/) (reviewed; validate on those OSes before relying on
+them).
 
-## Configure & run
+Then edit the config (see below) and start the service.
 
-Create a settings file at the platform state directory (or pass `-dir`):
+## Configure
+
+Settings file at the platform state directory (or pass `-dir`):
 
 - Linux: `/etc/siembox-agent/agent.json`
 - macOS: `/Library/Application Support/SIEMBox/agent/agent.json`
@@ -91,13 +99,38 @@ Create a settings file at the platform state directory (or pass `-dir`):
   "ca_cert_path": "/etc/siembox-agent/ca.pem"
 }
 ```
+See [`examples/agent.json`](examples/agent.json). On first run the agent consumes
+the enrollment token, persists its identity to `identity.json` (mode 0600), and
+reuses it thereafter.
 
-See [`examples/agent.json`](examples/agent.json). Then:
+## Run as a service
 
 ```sh
-siembox-agent -dir /etc/siembox-agent run    # enrolls on first run, then runs
+sudo siembox-agent -dir /etc/siembox-agent install   # register with the init system
+sudo siembox-agent -dir /etc/siembox-agent start
+sudo siembox-agent status                            # running | stopped | unknown
+sudo siembox-agent -dir /etc/siembox-agent stop
+sudo siembox-agent -dir /etc/siembox-agent uninstall
+```
+Service registration adapts to the host: systemd or SysV (Linux), launchd
+(macOS), Service Control Manager (Windows). To run in the foreground instead:
+`siembox-agent -dir /etc/siembox-agent run`.
+
+## Test on an endpoint (no server required)
+
+Validate the agent on a host before any SIEMBox server exists — these run the
+real scanners locally and print JSON to stdout:
+
+```sh
+sudo siembox-agent scan     # one-shot grype vulnerability scan -> findings JSON
+sudo siembox-agent check    # one-shot osquery snapshot + Sigma eval -> detections JSON
 ```
 
-On first run the agent consumes the enrollment token, persists its identity to
-`identity.json` (mode 0600), and begins reporting. Subsequent runs reuse the
-stored identity.
+## Build & test (from source)
+
+```sh
+make build        # build ./bin/siembox-agent for the host platform
+make test         # go test ./...
+make cross        # cross-compile for linux/darwin/windows (amd64+arm64)
+make snapshot     # goreleaser: build .deb/.rpm + archives locally (no publish)
+```

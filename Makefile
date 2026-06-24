@@ -3,7 +3,7 @@ PKG     := ./cmd/siembox-agent
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/cladkins/siembox-edr/internal/version.Version=$(VERSION)
 
-.PHONY: build test vet cross clean
+.PHONY: build test vet cross snapshot clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(PKG)
@@ -22,6 +22,11 @@ cross:
 	GOOS=darwin  GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-amd64  $(PKG)
 	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64  $(PKG)
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe $(PKG)
+
+# Build release artifacts (archives, .deb/.rpm, checksums) locally without
+# publishing. Requires goreleaser (https://goreleaser.com).
+snapshot:
+	goreleaser release --snapshot --clean
 
 clean:
 	rm -rf bin dist
