@@ -1,0 +1,26 @@
+#!/bin/sh
+# postinstall - run by the macOS Installer after files are laid down.
+# Seeds a config from the template, fetches grype if missing, and registers the
+# launchd service. The service is NOT started automatically: configure
+# agent.json (server_url + enrollment_token) first, then start it.
+set -e
+
+CONF_DIR="/Library/Application Support/SIEMBox/agent"
+CONF="$CONF_DIR/agent.json"
+BIN="/usr/local/bin/siembox-agent"
+
+if [ ! -f "$CONF" ] && [ -f "$CONF_DIR/agent.json.template" ]; then
+	cp "$CONF_DIR/agent.json.template" "$CONF"
+	chmod 600 "$CONF"
+fi
+
+# grype (vulnerability scanner). osquery on macOS is best installed from the
+# official .pkg or Homebrew; the agent runs without it (detection disabled).
+if ! command -v grype >/dev/null 2>&1; then
+	curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || true
+fi
+
+# Register the launchd service (start manually after configuring agent.json).
+"$BIN" -dir "$CONF_DIR" install || true
+
+exit 0
