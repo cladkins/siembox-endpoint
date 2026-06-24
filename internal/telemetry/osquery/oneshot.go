@@ -8,7 +8,17 @@ import (
 	"time"
 
 	"github.com/cladkins/siembox-edr/internal/telemetry"
+	"github.com/cladkins/siembox-edr/internal/util"
 )
+
+// osqueryExtraDirs are non-PATH locations to look for osquery binaries, which
+// matters under sudo/launchd where PATH is minimal. Covers the official macOS
+// pkg install path and Homebrew.
+var osqueryExtraDirs = []string{
+	"/usr/local/bin",
+	"/opt/homebrew/bin",
+	"/opt/osquery/lib/osquery.app/Contents/MacOS",
+}
 
 // oneShotRunner executes a command and returns its stdout. Overridable in tests.
 type oneShotRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -30,6 +40,7 @@ func runOnceWith(ctx context.Context, run oneShotRunner, binary string, queries 
 	if binary == "" {
 		binary = "osqueryi"
 	}
+	binary, _ = util.FindBinary(binary, osqueryExtraDirs)
 	if len(queries) == 0 {
 		queries = DefaultQueries()
 	}
@@ -38,6 +49,9 @@ func runOnceWith(ctx context.Context, run oneShotRunner, binary string, queries 
 	for _, q := range queries {
 		out, err := run(ctx, binary, "--json", q.SQL)
 		if err != nil {
+			if stderr := util.StderrText(err); stderr != "" {
+				return nil, fmt.Errorf("osqueryi %s: %w: %s", q.Name, err, stderr)
+			}
 			return nil, fmt.Errorf("osqueryi %s: %w", q.Name, err)
 		}
 		rows, err := parseOsqueryiJSON(out)

@@ -40,13 +40,23 @@ JSON
 fi
 
 # Dependencies.
-if command -v brew >/dev/null 2>&1; then
-	command -v grype >/dev/null 2>&1 || brew install grype || true
-	command -v osqueryd >/dev/null 2>&1 || brew install --cask osquery || true
-else
-	command -v grype >/dev/null 2>&1 || \
-		curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || true
-	echo "siembox-agent: install osquery from https://osquery.io/downloads (official .pkg) if not present."
+OSQUERY_VERSION="5.23.0"
+command -v grype >/dev/null 2>&1 || [ -x /usr/local/bin/grype ] || \
+	curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || true
+
+if ! command -v osqueryi >/dev/null 2>&1 \
+	&& [ ! -x /usr/local/bin/osqueryi ] \
+	&& [ ! -x /opt/osquery/lib/osquery.app/Contents/MacOS/osqueryi ]; then
+	if command -v brew >/dev/null 2>&1; then
+		brew install --cask osquery || true
+	else
+		TMP=$(mktemp -d)
+		if curl -fsSL -o "$TMP/osquery.pkg" "https://pkg.osquery.io/darwin/osquery-${OSQUERY_VERSION}.pkg"; then
+			installer -pkg "$TMP/osquery.pkg" -target / || \
+				echo "siembox-agent: WARNING: osquery install failed; detection disabled until installed."
+		fi
+		rm -rf "$TMP"
+	fi
 fi
 
 "$INSTALL_BIN" -dir "$CONF_DIR" install || true

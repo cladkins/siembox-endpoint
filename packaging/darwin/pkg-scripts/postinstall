@@ -1,26 +1,49 @@
 #!/bin/sh
 # postinstall - run by the macOS Installer after files are laid down.
-# Seeds a config from the template, fetches grype if missing, and registers the
-# launchd service. The service is NOT started automatically: configure
-# agent.json (server_url + enrollment_token) first, then start it.
+# Seeds config from the template, installs osquery + grype if missing, and
+# registers the launchd service. The service is NOT started automatically:
+# configure agent.json (server_url + enrollment_token) first, then start it.
 set -e
 
 CONF_DIR="/Library/Application Support/SIEMBox/agent"
 CONF="$CONF_DIR/agent.json"
 BIN="/usr/local/bin/siembox-agent"
+OSQUERY_VERSION="5.23.0"
 
 if [ ! -f "$CONF" ] && [ -f "$CONF_DIR/agent.json.template" ]; then
 	cp "$CONF_DIR/agent.json.template" "$CONF"
 	chmod 600 "$CONF"
 fi
 
-# grype (vulnerability scanner). osquery on macOS is best installed from the
-# official .pkg or Homebrew; the agent runs without it (detection disabled).
-if ! command -v grype >/dev/null 2>&1; then
+# grype (vulnerability scanner).
+if ! command -v grype >/dev/null 2>&1 && [ ! -x /usr/local/bin/grype ]; then
 	curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || true
+fi
+
+# osquery (host telemetry for detection). Install the official macOS pkg if no
+# osqueryi is present in the usual locations.
+if ! command -v osqueryi >/dev/null 2>&1 \
+	&& [ ! -x /usr/local/bin/osqueryi ] \
+	&& [ ! -x /opt/osquery/lib/osquery.app/Contents/MacOS/osqueryi ]; then
+	TMP=$(mktemp -d)
+	if curl -fsSL -o "$TMP/osquery.pkg" "https://pkg.osquery.io/darwin/osquery-${OSQUERY_VERSION}.pkg"; then
+		installer -pkg "$TMP/osquery.pkg" -target / || \
+			echo "siembox-agent: WARNING: osquery install failed; detection (check) disabled until installed."
+	else
+		echo "siembox-agent: WARNING: could not download osquery; detection disabled until installed."
+	fi
+	rm -rf "$TMP"
 fi
 
 # Register the launchd service (start manually after configuring agent.json).
 "$BIN" -dir "$CONF_DIR" install || true
+
+# Full Disk Access guidance. The narrowed scan scope avoids most protected
+# paths, but background scans of some locations and certain osquery tables need
+# Full Disk Access for the daemon. macOS does not allow granting this
+# programmatically, so open the settings pane and point the user at it
+# (best-effort; may not surface from the installer's root context).
+/usr/bin/osascript -e 'display dialog "SIEMBox EDR is installed.\n\nFor full background scanning, grant Full Disk Access to siembox-agent in System Settings > Privacy & Security > Full Disk Access.\n\nThen set server_url + enrollment_token in:\n/Library/Application Support/SIEMBox/agent/agent.json\nand run: sudo siembox-agent start" buttons {"OK"} default button "OK"' >/dev/null 2>&1 || true
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFilesAccess" >/dev/null 2>&1 || true
 
 exit 0

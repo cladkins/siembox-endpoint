@@ -40,11 +40,18 @@ service on Linux, macOS, and Windows.
 
 ### Vulnerability scanning
 
-The agent shells out to [`grype`](https://github.com/anchore/grype) (shipped
-alongside the agent by the installer; auto-installs its own CVE database on
-first run). If `grype` is not found on `PATH`, vuln scanning is skipped and the
-rest of the agent still runs. Configure via `grype_binary` and
-`vuln_scan_target` in `agent.json` (defaults: `grype`, `dir:/`).
+The agent shells out to [`grype`](https://github.com/anchore/grype) (installed
+by the package; auto-installs its own CVE database on first run). If `grype` is
+not found, vuln scanning is skipped and the rest of the agent still runs.
+Configure via `grype_binary` and `vuln_scan_target` in `agent.json`.
+
+The default scan scope is **OS-specific**: Linux scans `dir:/` (reads the OS
+package DBs); **macOS** scans installed-software locations (`/Applications`,
+`/System/Applications`, `/Library`, `/usr/local`, `/opt`) rather than the whole
+disk — this avoids walking TCC-protected user folders (no permission prompts)
+and is much faster. Setting `vuln_scan_target` overrides this with a single
+target. The binary is located via `PATH` plus common dirs (`/usr/local/bin`,
+`/opt/homebrew/bin`), so it works under `sudo`/launchd.
 
 ### Detection
 
@@ -55,9 +62,12 @@ against [Sigma](https://github.com/SigmaHQ/sigma) rules using
 [`sigma-go`](https://github.com/bradleyjkemp/sigma-go). An embedded default rule
 pack lives in `internal/detect/rules/` and is always active; the SIEMBox server
 can push additional rules via the agent config. Matches are shipped as
-detections to `/api/edr/events` and land in SIEMBox's existing alerts. If
-`osqueryd` is not found on `PATH`, detection is skipped and the rest of the
-agent still runs. Configure the binary via `osquery_binary` in `agent.json`.
+detections to `/api/edr/events` and land in SIEMBox's existing alerts. osquery
+is installed by the package; if it's not found, detection is skipped and the
+rest of the agent still runs. The binary is located via `PATH` plus common
+locations (`/usr/local/bin`, `/opt/homebrew/bin`, the official macOS osquery
+path), so `check`/detection work under `sudo`/launchd. Configure the binary via
+`osquery_binary` in `agent.json`.
 
 ## How it talks to SIEMBox
 

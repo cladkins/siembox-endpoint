@@ -3,6 +3,7 @@ package vuln
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cladkins/siembox-edr/internal/models"
@@ -111,8 +112,62 @@ func TestGrypeScanRunnerError(t *testing.T) {
 }
 
 func TestGrypeDefaults(t *testing.T) {
-	s := NewGrypeScanner("", "")
-	if s.binary != "grype" || s.target != "dir:/" {
-		t.Errorf("defaults not applied: binary=%q target=%q", s.binary, s.target)
+	// Explicit target overrides OS defaults with a single target.
+	s := NewGrypeScanner("", "dir:/custom")
+	if s.binary != "grype" {
+		t.Errorf("binary = %q, want grype", s.binary)
+	}
+	if len(s.targets) != 1 || s.targets[0] != "dir:/custom" {
+		t.Errorf("targets = %v, want [dir:/custom]", s.targets)
+	}
+
+	// Empty target uses OS defaults.
+	d := NewGrypeScanner("", "")
+	if len(d.targets) == 0 {
+		t.Error("expected default targets for empty target")
+	}
+}
+
+func TestDefaultGrypeTargets(t *testing.T) {
+	if got := defaultGrypeTargets("linux"); len(got) != 1 || got[0] != "dir:/" {
+		t.Errorf("linux targets = %v, want [dir:/]", got)
+	}
+	mac := defaultGrypeTargets("darwin")
+	if len(mac) < 2 {
+		t.Fatalf("darwin targets too few: %v", mac)
+	}
+	for _, tt := range mac {
+		if strings.Contains(tt, "/Users") {
+			t.Errorf("darwin default scans a user dir (TCC risk): %q", tt)
+		}
+	}
+}
+
+func TestExistingTargets(t *testing.T) {
+	dir := t.TempDir()
+	got := existingTargets([]string{"dir:" + dir, "dir:/no/such/path/here", "registry:alpine:latest"})
+	// existing dir kept, missing dir dropped, non-dir source kept.
+	if len(got) != 2 {
+		t.Fatalf("got %v, want 2 entries (existing dir + registry source)", got)
+	}
+}
+
+func TestGrypeScanMergesAndDedupes(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	s := NewGrypeScanner("grype", "")
+	s.targets = []string{"dir:" + dirA, "dir:" + dirB}
+	// Both targets return the same finding; it should be deduped to one.
+	s.runner = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte(sampleGrypeJSON), nil
+	}
+	batch, err := s.Scan(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	// sampleGrypeJSON has 2 distinct vulns; across 2 identical targets, dedupe
+	// keeps 2 (not 4).
+	if len(batch.Vulnerabilities) != 2 {
+		t.Errorf("got %d vulns after merge/dedupe, want 2", len(batch.Vulnerabilities))
 	}
 }

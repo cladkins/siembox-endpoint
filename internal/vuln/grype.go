@@ -4,12 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-edr/internal/util"
 )
+
+// grypeExtraDirs are non-PATH locations to look for the grype binary, which
+// matters under sudo/launchd where PATH is minimal.
+var grypeExtraDirs = []string{"/usr/local/bin", "/opt/homebrew/bin"}
 
 // GrypeScanner runs the bundled `grype` binary against the host and maps its
 // JSON output into the SIEMBox vulnerability model. We shell out to grype
@@ -19,24 +26,45 @@ import (
 type GrypeScanner struct {
 	// binary is the grype executable (name on PATH or absolute path).
 	binary string
-	// target is the grype source argument, e.g. "dir:/" to catalog the host's
-	// installed OS packages and application dependencies.
-	target string
-	// runner executes a command and returns combined stdout. Overridable in
-	// tests so the scanner can be exercised without grype installed.
+	// targets are the grype source arguments, e.g. "dir:/Applications". One
+	// grype invocation runs per target and results are merged. Defaults are
+	// OS-specific (see defaultGrypeTargets) to avoid walking protected user
+	// directories on macOS, which both triggers TCC prompts and can fail the
+	// scan.
+	targets []string
+	// runner executes a command and returns stdout. Overridable in tests so the
+	// scanner can be exercised without grype installed.
 	runner func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
-// NewGrypeScanner constructs a scanner. Empty binary/target fall back to
-// "grype" and "dir:/".
+// NewGrypeScanner constructs a scanner. Empty binary falls back to "grype". A
+// non-empty target overrides the OS defaults with a single target; empty uses
+// defaultGrypeTargets for the current OS.
 func NewGrypeScanner(binary, target string) *GrypeScanner {
 	if binary == "" {
 		binary = "grype"
 	}
-	if target == "" {
-		target = "dir:/"
+	var targets []string
+	if target != "" {
+		targets = []string{target}
+	} else {
+		targets = defaultGrypeTargets(runtime.GOOS)
 	}
-	return &GrypeScanner{binary: binary, target: target, runner: defaultRunner}
+	return &GrypeScanner{binary: binary, targets: targets, runner: defaultRunner}
+}
+
+// defaultGrypeTargets returns the scan roots for an OS. macOS is scoped to
+// installed-software locations (avoiding /Users and other TCC-protected
+// trees); Linux scans the whole filesystem to catch OS package databases.
+func defaultGrypeTargets(goos string) []string {
+	switch goos {
+	case "darwin":
+		return []string{"dir:/Applications", "dir:/System/Applications", "dir:/Library", "dir:/usr/local", "dir:/opt"}
+	case "windows":
+		return []string{`dir:C:\Program Files`, `dir:C:\Program Files (x86)`}
+	default: // linux and others
+		return []string{"dir:/"}
+	}
 }
 
 func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -44,42 +72,88 @@ func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, er
 	return cmd.Output()
 }
 
-// Available reports whether the grype binary can be located. Callers can use
-// this to decide whether to fall back to NoopScanner.
+// resolveBinary locates the grype executable, falling back to known dirs.
+func (g *GrypeScanner) resolveBinary() (string, bool) {
+	return util.FindBinary(g.binary, grypeExtraDirs)
+}
+
+// Available reports whether the grype binary can be located.
 func (g *GrypeScanner) Available() bool {
-	if strings.ContainsAny(g.binary, `/\`) {
-		return true // explicit path; trust it and let Scan surface errors
-	}
-	_, err := exec.LookPath(g.binary)
-	return err == nil
+	_, ok := g.resolveBinary()
+	return ok
 }
 
 // Name implements Scanner.
 func (g *GrypeScanner) Name() string { return "grype" }
 
-// Scan runs grype and returns the mapped findings.
+// Scan runs grype against each existing target and returns the merged,
+// de-duplicated findings.
 func (g *GrypeScanner) Scan(ctx context.Context, agentID string) (models.VulnBatch, error) {
 	started := time.Now().UTC()
-	out, err := g.runner(ctx, g.binary, g.target, "-o", "json", "-q")
-	if err != nil {
-		return models.VulnBatch{}, fmt.Errorf("run grype: %w", err)
+	bin, _ := g.resolveBinary()
+
+	targets := existingTargets(g.targets)
+	if len(targets) == 0 {
+		return models.VulnBatch{}, fmt.Errorf("no scan targets exist on this host (looked for %s)", strings.Join(g.targets, ", "))
 	}
-	vulns, err := parseGrypeJSON(out)
-	if err != nil {
-		return models.VulnBatch{}, err
+
+	seen := map[string]bool{}
+	var merged []models.Vulnerability
+	for _, t := range targets {
+		// No -q: grype writes the JSON report to stdout and logs/errors to
+		// stderr, so dropping quiet mode lets us surface the real failure
+		// reason (e.g. a permission/TCC denial) without polluting the JSON.
+		out, err := g.runner(ctx, bin, t, "-o", "json")
+		if err != nil {
+			if stderr := util.StderrText(err); stderr != "" {
+				return models.VulnBatch{}, fmt.Errorf("run grype on %s: %w: %s", t, err, stderr)
+			}
+			return models.VulnBatch{}, fmt.Errorf("run grype on %s: %w", t, err)
+		}
+		vulns, err := parseGrypeJSON(out)
+		if err != nil {
+			return models.VulnBatch{}, err
+		}
+		for _, v := range vulns {
+			key := v.CVE + "|" + v.Package + "|" + v.InstalledVersion
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, v)
+		}
 	}
+
 	return models.VulnBatch{
 		AgentID:         agentID,
 		ScanStartedAt:   started,
 		ScanCompletedAt: time.Now().UTC(),
-		Vulnerabilities: vulns,
+		Vulnerabilities: merged,
 	}, nil
+}
+
+// existingTargets drops "dir:" targets whose path does not exist (grype errors
+// on a missing directory). Non-directory sources are always kept.
+func existingTargets(targets []string) []string {
+	var out []string
+	for _, t := range targets {
+		path, ok := strings.CutPrefix(t, "dir:")
+		if !ok {
+			out = append(out, t) // not a dir source; let grype handle it
+			continue
+		}
+		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // UpdateDB refreshes grype's local vulnerability database. Grype auto-updates
 // by default, so this is best-effort and its failure should not block a scan.
 func (g *GrypeScanner) UpdateDB(ctx context.Context) error {
-	_, err := g.runner(ctx, g.binary, "db", "update")
+	bin, _ := g.resolveBinary()
+	_, err := g.runner(ctx, bin, "db", "update")
 	return err
 }
 

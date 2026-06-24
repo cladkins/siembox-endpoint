@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cladkins/siembox-edr/internal/telemetry"
+	"github.com/cladkins/siembox-edr/internal/util"
 )
 
 // Query is a single scheduled osquery query.
@@ -45,13 +46,10 @@ func NewDaemon(binary, workDir string, queries []Query) *Daemon {
 	return &Daemon{binary: binary, workDir: workDir, queries: queries}
 }
 
-// Available reports whether osqueryd can be located.
+// Available reports whether osqueryd can be located (PATH or known dirs).
 func (d *Daemon) Available() bool {
-	if strings.ContainsAny(d.binary, `/\`) {
-		return true
-	}
-	_, err := exec.LookPath(d.binary)
-	return err == nil
+	_, ok := util.FindBinary(d.binary, osqueryExtraDirs)
+	return ok
 }
 
 const resultsLogName = "osqueryd.results.log"
@@ -74,7 +72,8 @@ func (d *Daemon) Start(ctx context.Context, out chan<- telemetry.Record) error {
 	resultsPath := filepath.Join(d.workDir, resultsLogName)
 	_ = os.Remove(resultsPath)
 
-	cmd := exec.CommandContext(ctx, d.binary,
+	bin, _ := util.FindBinary(d.binary, osqueryExtraDirs)
+	cmd := exec.CommandContext(ctx, bin,
 		"--config_path="+cfgPath,
 		"--logger_plugin=filesystem",
 		"--logger_path="+d.workDir,
