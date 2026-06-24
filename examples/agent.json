@@ -1,0 +1,6 @@
+{
+  "server_url": "https://siembox.example.lan:8421",
+  "enrollment_token": "paste-token-from-siembox-ui",
+  "ca_cert_path": "",
+  "insecure_skip_verify": false
+}

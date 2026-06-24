@@ -1,0 +1,16 @@
+# Build output
+/bin/
+/dist/
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Agent runtime state (never commit identity/keys/spool)
+identity.json
+/spool/
+
+# Editor/OS
+.DS_Store
+*.swp
