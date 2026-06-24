@@ -18,11 +18,15 @@ go build -ldflags $ld -o build\siembox-agent.exe .\cmd\siembox-agent
 
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Write-Host "installing WiX CLI..."
-    dotnet tool install --global wix
+    # Pin to v5: WiX v6/v7 require accepting the Open Source Maintenance Fee
+    # (OSMF) EULA, which blocks non-interactive CI builds. v5 uses the same
+    # v4 schema namespace this .wxs targets.
+    dotnet tool install --global wix --version 5.0.2
     $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
 }
 
 $out = "dist\siembox-agent-$Version-windows-amd64.msi"
 Write-Host "building $out ..."
 wix build packaging\windows\siembox-agent.wxs -d Version=$Version -d BinDir=build -o $out
+if ($LASTEXITCODE -ne 0) { throw "wix build failed with exit code $LASTEXITCODE" }
 Write-Host "built $out"
