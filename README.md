@@ -126,6 +126,18 @@ Service registration adapts to the host: systemd or SysV (Linux), launchd
 (macOS), Service Control Manager (Windows). To run in the foreground instead:
 `siembox-agent -dir /etc/siembox-agent run`.
 
+## macOS menu bar app
+
+A lightweight status-bar app (`SIEMBox Menu Bar.app`, built in Go with
+`fyne.io/systray`) provides a GUI for the agent: service status, **Run
+Vulnerability Scan**, **Run Detection Check** (with last-run finding/detection
+counts + notifications), and reveal-config. It shells out to the installed
+`siembox-agent` CLI, so **install the agent package first**, then drag
+`SIEMBox Menu Bar.app` (from the release `SIEMBox-Menu-Bar-*-macos.zip`) into
+`/Applications` and launch it. It runs menu-bar-only (no Dock icon). Scans run
+as your user against the scoped software locations, so no `sudo` is needed for a
+manual scan. (Unsigned for now: first launch may need right-click → Open.)
+
 ## Test on an endpoint (no server required)
 
 Validate the agent on a host before any SIEMBox server exists — these run the
