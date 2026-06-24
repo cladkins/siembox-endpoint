@@ -31,6 +31,15 @@ rm -f "$ROOT/agent-amd64" "$ROOT/agent-arm64"
 chmod 0755 "$ROOT/usr/local/bin/siembox-agent"
 
 cp packaging/agent.json.template "$ROOT/Library/Application Support/SIEMBox/agent/agent.json.template"
+
+# Bundle the menu bar app into the payload so it installs to /Applications, and
+# a LaunchAgent so it starts at login. (pkg-installed files aren't quarantined,
+# so it launches without a Gatekeeper prompt even unsigned.)
+mkdir -p "$ROOT/Applications" "$ROOT/Library/LaunchAgents"
+VERSION="$VERSION" bash packaging/darwin/make-tray-app.sh "$ROOT/Applications"
+cp packaging/darwin/io.siembox.menubar.plist "$ROOT/Library/LaunchAgents/io.siembox.menubar.plist"
+chmod 0644 "$ROOT/Library/LaunchAgents/io.siembox.menubar.plist"
+
 cp packaging/darwin/pkg-scripts/postinstall "$SCRIPTS/postinstall"
 chmod 0755 "$SCRIPTS/postinstall"
 

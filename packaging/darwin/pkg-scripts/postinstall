@@ -46,4 +46,11 @@ fi
 /usr/bin/osascript -e 'display dialog "SIEMBox EDR is installed.\n\nFor full background scanning, grant Full Disk Access to siembox-agent in System Settings > Privacy & Security > Full Disk Access.\n\nThen set server_url + enrollment_token in:\n/Library/Application Support/SIEMBox/agent/agent.json\nand run: sudo siembox-agent start" buttons {"OK"} default button "OK"' >/dev/null 2>&1 || true
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFilesAccess" >/dev/null 2>&1 || true
 
+# Launch the menu bar app now for the logged-in user (it also auto-starts at
+# login via /Library/LaunchAgents/io.siembox.menubar.plist).
+CONSOLE_UID=$(/usr/bin/stat -f%u /dev/console 2>/dev/null || echo "")
+if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
+	/bin/launchctl asuser "$CONSOLE_UID" /usr/bin/open -a "SIEMBox Menu Bar" >/dev/null 2>&1 || true
+fi
+
 exit 0
