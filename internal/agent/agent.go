@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/cladkins/siembox-edr/internal/config"
 	"github.com/cladkins/siembox-edr/internal/detect"
+	"github.com/cladkins/siembox-edr/internal/detect/yara"
 	"github.com/cladkins/siembox-edr/internal/inventory"
 	"github.com/cladkins/siembox-edr/internal/models"
 	"github.com/cladkins/siembox-edr/internal/transport"
@@ -46,6 +48,10 @@ type Agent struct {
 	scanner vuln.Scanner
 	engine  detect.Engine
 	log     *slog.Logger
+
+	// restartDetection signals the detection supervisor to stop and restart the
+	// engine (re-reading the on-disk YARA signature file) after a rule update.
+	restartDetection chan struct{}
 }
 
 // New constructs an Agent from loaded state. The transport client is created
@@ -62,12 +68,13 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 		return nil, err
 	}
 	return &Agent{
-		state:   state,
-		client:  client,
-		spool:   spool,
-		scanner: vuln.NoopScanner{},
-		engine:  detect.NoopEngine{},
-		log:     log,
+		state:            state,
+		client:           client,
+		spool:            spool,
+		scanner:          vuln.NoopScanner{},
+		engine:           detect.NoopEngine{},
+		log:              log,
+		restartDetection: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -86,8 +93,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	a.log.Info("agent running", "agent_id", a.state.Identity.AgentID, "version", version.Version)
 
-	if err := a.engine.LoadRules(a.state.Identity.Config.Rules); err != nil {
-		a.log.Warn("load rules", "err", err)
+	// Pull any server-curated YARA rules before detection starts so the first
+	// osquery launch already uses them. Best-effort; baseline rules apply
+	// regardless. The detection supervisor (runDetection) calls LoadRules.
+	a.syncYaraRules(ctx)
+	// Detection hasn't started yet, so the signature file is already current;
+	// drop the restart the initial sync queued to avoid an immediate bounce.
+	select {
+	case <-a.restartDetection:
+	default:
 	}
 
 	// Send an inventory snapshot immediately on startup.
@@ -112,11 +126,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	run(func() { a.tick(ctx, sec(cfg.VulnScanIntervalSec, defaultVulnScanSec), a.runVulnScan) })
 	run(func() { a.tick(ctx, spoolFlushSec, a.flushSpool) })
 	run(func() { a.batchEvents(ctx, events) })
-	run(func() {
-		if err := a.engine.Run(ctx, events); err != nil && ctx.Err() == nil {
-			a.log.Error("detection engine stopped", "err", err)
-		}
-	})
+	run(func() { a.runDetection(ctx, events) })
 
 	<-ctx.Done()
 	a.log.Info("shutting down")
@@ -187,6 +197,79 @@ func (a *Agent) enroll(ctx context.Context) error {
 	return nil
 }
 
+// runDetection supervises the detection engine, restarting it when YARA rules
+// are updated. The engine and its osquery source are re-entrant: each Run
+// re-reads the on-disk signature file, so a restart applies new rules. Blocks
+// until ctx is cancelled.
+func (a *Agent) runDetection(ctx context.Context, events chan<- models.Event) {
+	for {
+		if err := a.engine.LoadRules(a.state.Identity.Config.Rules); err != nil {
+			a.log.Warn("load rules", "err", err)
+		}
+		child, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if err := a.engine.Run(child, events); err != nil && child.Err() == nil {
+				a.log.Error("detection engine stopped", "err", err)
+			}
+		}()
+
+		select {
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return
+		case <-a.restartDetection:
+			a.log.Info("restarting detection to apply updated YARA rules")
+			cancel()
+			<-done
+			// loop: restart with the refreshed signature file
+		case <-done:
+			// Engine exited on its own (e.g. osquery crashed); cancel and retry
+			// after a short pause rather than spinning.
+			cancel()
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+}
+
+// syncYaraRules downloads the server's YARA bundle when its version exceeds the
+// applied one, writes it (alongside the embedded baseline) to the signature
+// file, persists the applied version, and signals a detection restart so
+// osquery reloads. Best-effort: failures leave the previous rules in place.
+func (a *Agent) syncYaraRules(ctx context.Context) {
+	cfg := a.state.Identity.Config
+	if cfg.YaraRulesVersion <= a.state.Identity.AppliedYaraRulesVersion {
+		return
+	}
+	raw, err := a.client.FetchYaraRules(ctx)
+	if err != nil {
+		a.log.Debug("yara rules fetch failed", "err", err)
+		return
+	}
+	if _, err := yara.WriteSignatures(filepath.Join(a.state.Dir, "yara"), raw); err != nil {
+		a.log.Warn("write yara rules", "err", err)
+		return
+	}
+	a.state.Identity.AppliedYaraRulesVersion = cfg.YaraRulesVersion
+	if err := a.state.SaveIdentity(); err != nil {
+		a.log.Warn("persist applied yara version", "err", err)
+	}
+	a.log.Info("applied updated YARA rules", "version", cfg.YaraRulesVersion, "bytes", len(raw))
+
+	// Nudge detection to restart; non-blocking so we never stall if the
+	// supervisor isn't ready or detection is disabled.
+	select {
+	case a.restartDetection <- struct{}{}:
+	default:
+	}
+}
+
 func (a *Agent) heartbeat(ctx context.Context) {
 	resp, err := a.client.Heartbeat(ctx, models.HeartbeatRequest{
 		Status:       "online",
@@ -219,6 +302,9 @@ func (a *Agent) pollConfig(ctx context.Context) {
 		a.log.Warn("reload rules", "err", err)
 	}
 	a.log.Info("applied config", "version", cfg.ConfigVersion, "rules", len(cfg.Rules))
+
+	// A new config may bump the YARA bundle version; pull + apply if so.
+	a.syncYaraRules(ctx)
 }
 
 func (a *Agent) reportInventory(ctx context.Context) {

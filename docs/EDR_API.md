@@ -64,9 +64,27 @@ Return the current `AgentConfig`.
   "vuln_scan_interval_seconds": 86400,
   "enabled_modules": ["inventory", "vuln", "detect"],
   "rule_set_version": 12,
-  "rules": ["<sigma rule yaml>", "..."]
+  "rules": ["<sigma rule yaml>", "..."],
+  "yara_rules_version": 7
 }
 ```
+
+`yara_rules_version` increments whenever the server's curated YARA signature
+bundle changes. When it exceeds the agent's applied version, the agent fetches
+the bundle from `GET /api/edr/agents/:id/yara` and reloads detection. Bump
+`config_version` whenever `yara_rules_version` changes so the heartbeat
+triggers a config re-pull.
+
+### `GET /api/edr/agents/:id/yara`
+Return the server's curated YARA signature bundle as raw rule text
+(`Content-Type: text/plain`). This is the concatenation of the chosen
+YARA-Forge tiers (Core + Extended) plus any custom rules. The agent appends its
+embedded baseline automatically, so the server need only return its own rules;
+an empty body is valid. Auth: agent key (Bearer + `X-Agent-ID`).
+
+The agent calls this only when `yara_rules_version` increases, writes the bundle
+to `<state-dir>/yara/siembox.yar`, and restarts its osquery `yara_events`
+scanning to apply it. Response: `200 OK` with the rule text.
 
 ### `POST /api/edr/inventory`
 Upsert the endpoint as an **asset** of type `endpoint`. The server maps
@@ -148,10 +166,12 @@ Response: `202 Accepted`.
 | inventory          | `assets` (reuse)     | `asset_type='endpoint'`, agent↔asset map |
 | events (detection) | `alerts` (reuse)     | normalized into existing alert pipeline  |
 | vulnerabilities    | `vulnerabilities`    | reuse, linked to endpoint asset          |
+| yara (download)    | `edr_yara_bundle`    | curated YARA rule text + version         |
 
-New server tables: `edr_agents`, `edr_enrollment_tokens`. Everything else
-reuses the existing SIEMBox data model so the current alert-triage and
-vulnerability dashboards work for endpoints with minimal new UI.
+New server tables: `edr_agents`, `edr_enrollment_tokens`, `edr_yara_bundle`.
+Everything else reuses the existing SIEMBox data model so the current
+alert-triage and vulnerability dashboards work for endpoints with minimal new
+UI.
 
 ## Offline behavior
 

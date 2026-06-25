@@ -40,6 +40,10 @@ type Identity struct {
 	AgentID     string             `json:"agent_id"`
 	AgentAPIKey string             `json:"agent_api_key"`
 	Config      models.AgentConfig `json:"config"`
+	// AppliedYaraRulesVersion is the YARA bundle version currently written to
+	// disk. Persisted so the agent doesn't re-download an unchanged bundle on
+	// every restart.
+	AppliedYaraRulesVersion int `json:"applied_yara_rules_version,omitempty"`
 }
 
 // State bundles the loaded settings and identity along with the directory they

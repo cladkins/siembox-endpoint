@@ -83,13 +83,39 @@ Respond the current `AgentConfig`:
   "vuln_scan_interval_seconds": 86400,
   "enabled_modules": ["inventory", "vuln", "detect"],
   "rule_set_version": 12,
-  "rules": ["<sigma rule YAML>", "..."]   // optional server-pushed Sigma rules
+  "rules": ["<sigma rule YAML>", "..."],   // optional server-pushed Sigma rules
+  "yara_rules_version": 7                    // bump when the YARA bundle changes
 }
 ```
 `rules` are **Sigma YAML documents** the agent evaluates locally *in addition to*
 its built-in default pack. You can start by returning an empty `rules` array and
 just the intervals; wire it to the existing `/api/rules` store later (filter to
 endpoint/Sigma rules). Bump `config_version` whenever any field changes.
+
+`yara_rules_version` signals YARA signature updates (see the YARA endpoint
+below). Start it at `0` (the agent then uses only its embedded baseline). Bump it
+— and `config_version` — whenever you publish a new YARA bundle.
+
+### `GET /api/edr/agents/:id/yara`  (agent auth)
+Return the curated YARA signature bundle as **raw rule text**
+(`Content-Type: text/plain`), `200 OK`. The agent calls this only when
+`yara_rules_version` increases; it appends its own embedded baseline, so return
+just the server's rules (an empty body is valid → agent runs baseline only).
+
+**How to build the bundle (refresh job):**
+1. On a schedule (daily is plenty — YARA-Forge publishes ~weekly), download the
+   latest **YARA-Forge Core + Extended** release `.yar` files from
+   `https://github.com/YARAHQ/yara-forge/releases` (the
+   `yara-forge-rules-core.yar` and `…-extended.yar` package assets).
+2. Concatenate them (plus any custom/operator rules), store the text and a
+   monotonically increasing version in `edr_yara_bundle`.
+3. Bump every agent's `yara_rules_version` (and `config_version`) to the new
+   version so the next heartbeat/config-poll triggers the download.
+
+Keep it simple to start: you can commit a single static bundle and serve it with
+`yara_rules_version: 1` before automating the refresh. Licensing: prefer the
+**Core** (and Extended) tiers — YARA-Forge records each rule's license and these
+tiers are curated for permissive, redistributable use.
 
 ### `POST /api/edr/inventory`  (agent auth)
 Body: `{agent_id, inventory:{hostname, os, os_version, arch, ip, mac, agent_version, software[], collected_at}}`.
@@ -145,7 +171,18 @@ CREATE TABLE edr_enrollment_tokens (
   used_at      timestamptz,                  -- null until consumed (if single-use)
   created_at   timestamptz DEFAULT now()
 );
+
+CREATE TABLE edr_yara_bundle (
+  version      int PRIMARY KEY,              -- monotonic; mirrors yara_rules_version
+  rules        text NOT NULL,               -- concatenated YARA rule text served as-is
+  sha256       text NOT NULL,
+  source       text,                        -- e.g. 'yara-forge core+extended'
+  created_at   timestamptz DEFAULT now()
+);
 ```
+Serve the highest-version `edr_yara_bundle.rules` from `GET …/yara`. A single
+global bundle is fine to start (all agents get the same rules); per-OS or
+per-group bundles can come later by keying on the agent.
 Mark `used_at` on enroll if tokens are single-use; otherwise allow reuse until
 `expires_at`. (Mirror whatever policy shipper keys use.)
 

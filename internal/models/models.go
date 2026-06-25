@@ -43,14 +43,18 @@ type EnrollResponse struct {
 // on enroll and re-fetched whenever the heartbeat reports a newer
 // ConfigVersion.
 type AgentConfig struct {
-	ConfigVersion           int      `json:"config_version"`
-	HeartbeatIntervalSec    int      `json:"heartbeat_interval_seconds"`
-	ConfigPollIntervalSec   int      `json:"config_poll_interval_seconds"`
-	InventoryIntervalSec    int      `json:"inventory_interval_seconds"`
-	VulnScanIntervalSec     int      `json:"vuln_scan_interval_seconds"`
-	EnabledModules          []string `json:"enabled_modules"`
-	RuleSetVersion          int      `json:"rule_set_version"`
-	Rules                   []string `json:"rules,omitempty"` // Sigma rule YAML documents
+	ConfigVersion         int      `json:"config_version"`
+	HeartbeatIntervalSec  int      `json:"heartbeat_interval_seconds"`
+	ConfigPollIntervalSec int      `json:"config_poll_interval_seconds"`
+	InventoryIntervalSec  int      `json:"inventory_interval_seconds"`
+	VulnScanIntervalSec   int      `json:"vuln_scan_interval_seconds"`
+	EnabledModules        []string `json:"enabled_modules"`
+	RuleSetVersion        int      `json:"rule_set_version"`
+	Rules                 []string `json:"rules,omitempty"` // Sigma rule YAML documents
+	// YaraRulesVersion increments whenever the server's YARA signature bundle
+	// changes. When it exceeds the agent's applied version, the agent downloads
+	// the bundle from GET /api/edr/agents/:id/yara and reloads detection.
+	YaraRulesVersion int `json:"yara_rules_version"`
 }
 
 // HeartbeatRequest is sent periodically to signal liveness.
