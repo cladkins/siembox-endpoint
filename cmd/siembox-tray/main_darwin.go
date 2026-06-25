@@ -23,6 +23,7 @@ import (
 
 	"github.com/cladkins/siembox-edr/internal/config"
 	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-edr/internal/util"
 )
 
 // agentBinary locates the siembox-agent CLI: next to this app first, then the
@@ -143,7 +144,9 @@ func runScan() {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, agentBinary(), "scan").Output()
 	if err != nil {
-		notify("Vulnerability scan failed (see Console for details)")
+		reason := failureReason(err)
+		logFailure("scan", reason)
+		notify("Vulnerability scan failed: " + firstLine(reason))
 		mLastScan.SetTitle("Last scan: failed at " + nowStamp())
 		return
 	}
@@ -169,7 +172,9 @@ func runCheck() {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, agentBinary(), "check").Output()
 	if err != nil {
-		notify("Detection check failed (see Console for details)")
+		reason := failureReason(err)
+		logFailure("check", reason)
+		notify("Detection check failed: " + firstLine(reason))
 		mLastCheck.SetTitle("Last check: failed at " + nowStamp())
 		return
 	}
@@ -307,3 +312,44 @@ func notify(msg string) {
 }
 
 func nowStamp() string { return time.Now().Format("15:04:05") }
+
+// failureReason extracts the most useful error text from a failed command:
+// the subprocess's stderr if present (grype/osquery write real errors there),
+// otherwise the Go error.
+func failureReason(err error) string {
+	if s := util.StderrText(err); s != "" {
+		return s
+	}
+	return err.Error()
+}
+
+// firstLine returns a trimmed, length-capped first line for a notification.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 140 {
+		s = s[:140] + "…"
+	}
+	return s
+}
+
+// logFailure appends full failure detail to ~/Library/Logs/SIEMBox/tray.log so
+// the cause is recoverable even after the notification disappears.
+func logFailure(action, detail string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(home, "Library", "Logs", "SIEMBox", "tray.log")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[%s] %s failed: %s\n", time.Now().Format(time.RFC3339), action, detail)
+}

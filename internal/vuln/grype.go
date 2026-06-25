@@ -79,6 +79,25 @@ func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, er
 	return cmd.Output()
 }
 
+// ensureGrypeCacheEnv points grype at a cache dir keyed to the running user, so
+// scans from different privilege contexts never collide. Without this, a `sudo`
+// scan creates a root-owned ~/Library/Caches/grype that the user-level menu bar
+// app then can't read ("permission denied" on vulnerability.db). Respects an
+// explicit GRYPE_DB_CACHE_DIR if the operator set one.
+func ensureGrypeCacheEnv() {
+	if os.Getenv("GRYPE_DB_CACHE_DIR") != "" {
+		return
+	}
+	base, err := os.UserCacheDir()
+	if err != nil || base == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "siembox-edr", fmt.Sprintf("grype-%d", os.Geteuid()))
+	if err := os.MkdirAll(dir, 0o755); err == nil {
+		_ = os.Setenv("GRYPE_DB_CACHE_DIR", dir)
+	}
+}
+
 // resolveBinary locates the grype executable, falling back to known dirs.
 func (g *GrypeScanner) resolveBinary() (string, bool) {
 	return util.FindBinary(g.binary, grypeExtraDirs)
@@ -98,6 +117,7 @@ func (g *GrypeScanner) Name() string { return "grype" }
 func (g *GrypeScanner) Scan(ctx context.Context, agentID string) (models.VulnBatch, error) {
 	started := time.Now().UTC()
 	bin, _ := g.resolveBinary()
+	ensureGrypeCacheEnv()
 
 	targets := existingTargets(g.targets)
 	if len(targets) == 0 {
@@ -160,6 +180,7 @@ func existingTargets(targets []string) []string {
 // by default, so this is best-effort and its failure should not block a scan.
 func (g *GrypeScanner) UpdateDB(ctx context.Context) error {
 	bin, _ := g.resolveBinary()
+	ensureGrypeCacheEnv()
 	_, err := g.runner(ctx, bin, "db", "update")
 	return err
 }
@@ -176,10 +197,10 @@ type grypeMatch struct {
 }
 
 type grypeVuln struct {
-	ID          string     `json:"id"`
-	Severity    string     `json:"severity"`
-	Description string     `json:"description"`
-	Fix         grypeFix   `json:"fix"`
+	ID          string      `json:"id"`
+	Severity    string      `json:"severity"`
+	Description string      `json:"description"`
+	Fix         grypeFix    `json:"fix"`
 	CVSS        []grypeCVSS `json:"cvss"`
 }
 
