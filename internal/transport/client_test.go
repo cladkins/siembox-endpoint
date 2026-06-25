@@ -95,6 +95,49 @@ func TestNon2xxIsError(t *testing.T) {
 	}
 }
 
+func TestFetchYaraRules(t *testing.T) {
+	const body = "rule A { condition: true }\n"
+	var gotAuth, gotAgent, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotAgent = r.Header.Get("X-Agent-ID")
+		gotPath = r.URL.Path
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv)
+	raw, err := c.FetchYaraRules(context.Background())
+	if err != nil {
+		t.Fatalf("FetchYaraRules: %v", err)
+	}
+	if string(raw) != body {
+		t.Errorf("body = %q", string(raw))
+	}
+	if gotPath != "/api/edr/agents/agent-1/yara" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotAuth != "Bearer secret" || gotAgent != "agent-1" {
+		t.Errorf("auth=%q agent=%q", gotAuth, gotAgent)
+	}
+}
+
+func TestFetchYaraRulesNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv)
+	if _, err := c.FetchYaraRules(context.Background()); err == nil {
+		t.Fatal("expected error on 404")
+	}
+}
+
 func TestPostRaw(t *testing.T) {
 	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

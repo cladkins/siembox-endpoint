@@ -105,6 +105,31 @@ func (c *Client) FetchConfig(ctx context.Context) (models.AgentConfig, error) {
 	return resp, err
 }
 
+// FetchYaraRules downloads the server's curated YARA signature bundle as raw
+// rule text. The agent calls this only when the config's YaraRulesVersion
+// exceeds its applied version. An empty body is valid (no server rules).
+func (c *Client) FetchYaraRules(ctx context.Context) ([]byte, error) {
+	path := fmt.Sprintf("/api/edr/agents/%s/yara", c.agentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/plain")
+	req.Header.Set("Authorization", "Bearer "+c.agentAPIKey)
+	req.Header.Set("X-Agent-ID", c.agentID)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GET %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	return io.ReadAll(resp.Body)
+}
+
 // SendInventory upserts the endpoint asset.
 func (c *Client) SendInventory(ctx context.Context, req models.InventoryRequest) error {
 	return c.do(ctx, http.MethodPost, "/api/edr/inventory", true, req, nil)
