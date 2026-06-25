@@ -75,6 +75,7 @@ func onReady() {
 	systray.AddSeparator()
 	mRefresh := systray.AddMenuItem("Refresh Status", "Re-check the service status")
 	mConfig := systray.AddMenuItem("Reveal Config in Finder", "Open the agent config directory")
+	mUninstall := systray.AddMenuItem("Uninstall SIEMBox EDR…", "Remove the agent, service, and this app")
 	mQuit := systray.AddMenuItem("Quit", "Quit the menu bar app")
 
 	go refreshStatus()
@@ -96,6 +97,8 @@ func onReady() {
 				go refreshStatus()
 			case <-mConfig.ClickedCh:
 				revealConfig()
+			case <-mUninstall.ClickedCh:
+				go uninstallAll()
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
@@ -220,6 +223,37 @@ func configureServer() {
 // revealConfig opens the agent's config directory in Finder.
 func revealConfig() {
 	_ = exec.Command("open", config.DefaultDir()).Start()
+}
+
+const uninstallerPath = "/usr/local/bin/siembox-uninstall"
+
+// uninstallAll fully removes SIEMBox EDR after confirmation, using the
+// privileged uninstaller the pkg installed, then quits this app.
+func uninstallAll() {
+	if !confirm("Uninstall SIEMBox EDR?\n\nThis removes the agent, the background service, and this menu bar app. osquery and grype are left installed.") {
+		return
+	}
+	if _, err := os.Stat(uninstallerPath); err != nil {
+		notify("Uninstaller not found — this app wasn't installed from the package. Quit it and drag it to the Trash.")
+		return
+	}
+	if err := runPrivileged(shellQuote(uninstallerPath)); err != nil {
+		notify("Uninstall cancelled or failed")
+		return
+	}
+	notify("SIEMBox EDR uninstalled.")
+	time.Sleep(time.Second)
+	systray.Quit()
+}
+
+// confirm shows a two-button dialog; returns true only if the user confirms.
+func confirm(msg string) bool {
+	script := fmt.Sprintf(`display dialog %q with title "SIEMBox EDR" buttons {"Cancel","Uninstall"} default button "Cancel"`, msg)
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		return false // Cancel makes osascript exit non-zero
+	}
+	return strings.Contains(string(out), "button returned:Uninstall")
 }
 
 // runPrivileged runs a shell command with administrator privileges via the

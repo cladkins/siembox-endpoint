@@ -126,6 +126,19 @@ Service registration adapts to the host: systemd or SysV (Linux), launchd
 (macOS), Service Control Manager (Windows). To run in the foreground instead:
 `siembox-agent -dir /etc/siembox-agent run`.
 
+## Uninstall
+
+- **macOS:** use the menu bar app's **Uninstall SIEMBox EDR…** item (removes the
+  service, menu bar app, binary, config, and package receipt), or run
+  `sudo siembox-uninstall`.
+- **Windows:** uninstall from **Settings → Apps** (the MSI removes the service).
+- **Linux (.deb/.rpm):** `sudo apt remove siembox-agent` / `sudo dnf remove
+  siembox-agent` (the package's pre-remove hook stops + unregisters the service).
+- **Linux (script install):** `curl -sSfL …/scripts/uninstall.sh | sudo sh`
+  (add `--purge` to also remove config + identity).
+
+osquery and grype are left installed in all cases.
+
 ## macOS menu bar app
 
 The `SIEMBox Menu Bar.app` (built in Go with `fyne.io/systray`) is the **control
