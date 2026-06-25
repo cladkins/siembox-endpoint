@@ -32,6 +32,7 @@ import (
 	"github.com/cladkins/siembox-edr/internal/detect"
 	"github.com/cladkins/siembox-edr/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-edr/internal/transport"
+	"github.com/cladkins/siembox-edr/internal/util"
 	"github.com/cladkins/siembox-edr/internal/version"
 	"github.com/cladkins/siembox-edr/internal/vuln"
 )
@@ -169,6 +170,7 @@ func statusString(s service.Status) string {
 // agent is not configured yet (no server_url), it idles and re-checks rather
 // than exiting, so the service starts cleanly and waits for configuration.
 func runAgent(ctx context.Context, dir string, log *slog.Logger) error {
+	util.EnsureSaneTmpdir()
 	state := waitForConfig(ctx, dir, log)
 	if state == nil {
 		return nil // ctx cancelled while waiting
@@ -235,6 +237,7 @@ func waitForConfig(ctx context.Context, dir string, log *slog.Logger) *config.St
 // --- one-shot commands (no server, no enrollment) ---
 
 func runScan(dir string, log *slog.Logger) error {
+	util.EnsureSaneTmpdir()
 	settings, _ := config.LoadSettingsOnly(dir) // best-effort; zero value is fine
 	g := vuln.NewGrypeScanner(settings.GrypeBinary, settings.VulnScanTarget)
 	if !g.Available() {
@@ -253,6 +256,7 @@ func runScan(dir string, log *slog.Logger) error {
 }
 
 func runCheck(dir string, log *slog.Logger) error {
+	util.EnsureSaneTmpdir()
 	settings, _ := config.LoadSettingsOnly(dir)
 	bin := osqueryiBinary(settings.OsqueryBinary)
 
