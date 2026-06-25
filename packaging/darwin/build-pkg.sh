@@ -30,6 +30,11 @@ lipo -create -output "$ROOT/usr/local/bin/siembox-agent" "$ROOT/agent-amd64" "$R
 rm -f "$ROOT/agent-amd64" "$ROOT/agent-arm64"
 chmod 0755 "$ROOT/usr/local/bin/siembox-agent"
 
+# Ship the uninstaller so the menu bar app's "Uninstall" item (and CLI users)
+# can fully remove SIEMBox EDR.
+cp packaging/darwin/uninstall.sh "$ROOT/usr/local/bin/siembox-uninstall"
+chmod 0755 "$ROOT/usr/local/bin/siembox-uninstall"
+
 cp packaging/agent.json.template "$ROOT/Library/Application Support/SIEMBox/agent/agent.json.template"
 
 # Bundle the menu bar app into the payload so it installs to /Applications, and
