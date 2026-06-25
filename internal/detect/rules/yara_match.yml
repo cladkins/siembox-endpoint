@@ -1,7 +1,7 @@
 title: YARA Signature Match On File
 id: siembox-yara-file-match
 status: experimental
-description: A file written to a monitored directory matched a YARA signature. The matched rule name(s) are in the "matches" field and the file in "path".
+description: A file written to a monitored directory matched a YARA signature. The matched rule name(s) are in the "matches" field and the file in "target_path".
 author: SIEMBox EDR
 level: high
 tags:

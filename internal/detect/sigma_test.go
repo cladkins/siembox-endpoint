@@ -107,7 +107,7 @@ func TestYaraEventFires(t *testing.T) {
 	rec := telemetry.Record{
 		Query:     "yara_events",
 		Action:    "added",
-		Columns:   map[string]string{"path": "/tmp/dropped.bin", "matches": "SIEMBox_YARA_SelfTest", "count": "1"},
+		Columns:   map[string]string{"target_path": "/tmp/dropped.bin", "matches": "SIEMBox_YARA_SelfTest", "count": "1"},
 		Timestamp: time.Now(),
 	}
 	e := NewSigmaEngine(fakeSource{}, base, nil)

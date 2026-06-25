@@ -226,7 +226,10 @@ func buildConfig(queries []Query) ([]byte, error) {
 
 // yaraEventsQuery drains only actual matches (count > 0) from the evented
 // yara_events table, so every row reaching the detection engine is a real hit.
-const yaraEventsQuery = "SELECT path, matches, count, action, category FROM yara_events WHERE count > 0;"
+// Note: yara_events names the file column "target_path" (the on-demand yara_file
+// table uses "path"); using "path" here makes osquery fail the query with
+// "no such column: path" and silently emit nothing.
+const yaraEventsQuery = "SELECT target_path, matches, count, action, category FROM yara_events WHERE count > 0;"
 
 // yaraEventsInterval is how often (seconds) buffered yara_events are drained.
 const yaraEventsInterval = 30
