@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/cladkins/siembox-edr/internal/telemetry"
@@ -12,13 +15,18 @@ import (
 )
 
 // osqueryExtraDirs are non-PATH locations to look for osquery binaries, which
-// matters under sudo/launchd where PATH is minimal. Covers the official macOS
-// pkg install path and Homebrew.
-var osqueryExtraDirs = []string{
-	"/usr/local/bin",
-	"/opt/homebrew/bin",
-	"/opt/osquery/lib/osquery.app/Contents/MacOS",
-}
+// matters under sudo/launchd/Windows-service where PATH is minimal. Covers the
+// official install paths on each OS (macOS pkg + Homebrew, Windows MSI).
+var osqueryExtraDirs = func() []string {
+	if runtime.GOOS == "windows" {
+		return []string{filepath.Join(os.Getenv("ProgramFiles"), "osquery")}
+	}
+	return []string{
+		"/usr/local/bin",
+		"/opt/homebrew/bin",
+		"/opt/osquery/lib/osquery.app/Contents/MacOS",
+	}
+}()
 
 // oneShotRunner executes a command and returns its stdout. Overridable in tests.
 type oneShotRunner func(ctx context.Context, name string, args ...string) ([]byte, error)

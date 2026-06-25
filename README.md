@@ -87,10 +87,20 @@ SIEMBox already collects.
 ```sh
 curl -sSfL https://raw.githubusercontent.com/cladkins/SIEMBOX-EDR/main/scripts/install.sh | sudo sh
 ```
-Or install the native package (`.deb`/`.rpm`) from a release. Both fetch osquery
-+ grype if missing and register the service. macOS/Windows installers live under
-[`packaging/`](packaging/) (reviewed; validate on those OSes before relying on
-them).
+Or install the native `.deb`/`.rpm` from a release — both fetch osquery + grype
+and register the service.
+
+**macOS:** install the `.pkg` from a release (installs the agent + service + the
+menu bar app, and fetches osquery + grype).
+
+**Windows:** from an extracted release archive, run in an **elevated PowerShell**:
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
+```
+It installs the agent + Windows service and fetches grype + osquery from their
+official downloads. (The `.msi` installs the agent + service but **not** the
+dependencies — use `install.ps1` to get a working scan/check, or install grype
+and osquery separately.)
 
 Then edit the config (see below) and start the service.
 

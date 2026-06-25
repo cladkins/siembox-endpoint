@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -15,8 +16,14 @@ import (
 )
 
 // grypeExtraDirs are non-PATH locations to look for the grype binary, which
-// matters under sudo/launchd where PATH is minimal.
-var grypeExtraDirs = []string{"/usr/local/bin", "/opt/homebrew/bin"}
+// matters under sudo/launchd/Windows-service where PATH is minimal. On Windows
+// the installer drops grype.exe next to the agent in Program Files\SIEMBox.
+var grypeExtraDirs = func() []string {
+	if runtime.GOOS == "windows" {
+		return []string{filepath.Join(os.Getenv("ProgramFiles"), "SIEMBox")}
+	}
+	return []string{"/usr/local/bin", "/opt/homebrew/bin"}
+}()
 
 // GrypeScanner runs the bundled `grype` binary against the host and maps its
 // JSON output into the SIEMBox vulnerability model. We shell out to grype
