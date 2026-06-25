@@ -32,6 +32,9 @@ type Daemon struct {
 	binary  string
 	workDir string
 	queries []Query
+
+	yaraSigPath string   // signature file for yara_events; empty disables YARA
+	yaraPaths   []string // directories (osquery FIM globs) to scan on file change
 }
 
 // NewDaemon constructs a Daemon. Empty binary defaults to "osqueryd". workDir
@@ -44,6 +47,19 @@ func NewDaemon(binary, workDir string, queries []Query) *Daemon {
 		queries = DefaultQueries()
 	}
 	return &Daemon{binary: binary, workDir: workDir, queries: queries}
+}
+
+// WithYara enables YARA file-detection: osquery watches watchPaths (FIM) and
+// scans changed files against the signatures in sigPath, surfacing matches via
+// the yara_events scheduled query. Empty watchPaths falls back to the OS default
+// drop-spot set. Returns the daemon for chaining.
+func (d *Daemon) WithYara(sigPath string, watchPaths []string) *Daemon {
+	d.yaraSigPath = sigPath
+	if len(watchPaths) == 0 {
+		watchPaths = DefaultYaraPaths()
+	}
+	d.yaraPaths = watchPaths
+	return d
 }
 
 // Available reports whether osqueryd can be located (PATH or known dirs).
@@ -60,7 +76,7 @@ func (d *Daemon) Start(ctx context.Context, out chan<- telemetry.Record) error {
 		return fmt.Errorf("create osquery workdir: %w", err)
 	}
 	cfgPath := filepath.Join(d.workDir, "osquery.conf")
-	cfg, err := buildConfig(d.queries)
+	cfg, err := buildConfigWithYara(d.queries, d.yaraSigPath, d.yaraPaths)
 	if err != nil {
 		return err
 	}
@@ -205,6 +221,21 @@ func normalizeQueryName(n string) string {
 
 // buildConfig renders an osquery config JSON from the scheduled queries.
 func buildConfig(queries []Query) ([]byte, error) {
+	return buildConfigWithYara(queries, "", nil)
+}
+
+// yaraEventsQuery drains only actual matches (count > 0) from the evented
+// yara_events table, so every row reaching the detection engine is a real hit.
+const yaraEventsQuery = "SELECT path, matches, count, action, category FROM yara_events WHERE count > 0;"
+
+// yaraEventsInterval is how often (seconds) buffered yara_events are drained.
+const yaraEventsInterval = 30
+
+// buildConfigWithYara renders the osquery config. When yaraSigPath and yaraPaths
+// are set it adds the file_paths (FIM) and yara sections plus a yara_events
+// scheduled query, so changed files in the watched dirs are scanned against the
+// signature file and matches surface as telemetry.
+func buildConfigWithYara(queries []Query, yaraSigPath string, yaraPaths []string) ([]byte, error) {
 	type sched struct {
 		Query    string `json:"query"`
 		Interval int    `json:"interval"`
@@ -218,9 +249,22 @@ func buildConfig(queries []Query) ([]byte, error) {
 		}
 		schedule[q.Name] = sched{Query: q.SQL, Interval: interval, Snapshot: false}
 	}
+
 	cfg := map[string]any{
 		"options":  map[string]any{"disable_events": false},
 		"schedule": schedule,
 	}
+
+	if yaraSigPath != "" && len(yaraPaths) > 0 {
+		schedule["yara_events"] = sched{Query: yaraEventsQuery, Interval: yaraEventsInterval, Snapshot: false}
+		const category = "siembox_yara"
+		const group = "siembox"
+		cfg["file_paths"] = map[string]any{category: yaraPaths}
+		cfg["yara"] = map[string]any{
+			"signatures": map[string]any{group: []string{yaraSigPath}},
+			"file_paths": map[string]any{category: []string{group}},
+		}
+	}
+
 	return json.MarshalIndent(cfg, "", "  ")
 }

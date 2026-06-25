@@ -2,6 +2,7 @@ package osquery
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +75,65 @@ func TestBuildConfig(t *testing.T) {
 	}
 	if q.Query == "" {
 		t.Error("processes query SQL empty")
+	}
+	// Without YARA configured there must be no yara_events query or yara section.
+	if _, ok := parsed.Schedule["yara_events"]; ok {
+		t.Error("yara_events scheduled without YARA configured")
+	}
+}
+
+func TestBuildConfigWithYara(t *testing.T) {
+	sig := "/etc/siembox-agent/yara/siembox.yar"
+	paths := []string{"/tmp/%%", "/usr/local/bin/%%"}
+	cfg, err := buildConfigWithYara(DefaultQueries(), sig, paths)
+	if err != nil {
+		t.Fatalf("buildConfigWithYara: %v", err)
+	}
+	var parsed struct {
+		Schedule map[string]struct {
+			Query    string `json:"query"`
+			Interval int    `json:"interval"`
+		} `json:"schedule"`
+		FilePaths map[string][]string `json:"file_paths"`
+		Yara      struct {
+			Signatures map[string][]string `json:"signatures"`
+			FilePaths  map[string][]string `json:"file_paths"`
+		} `json:"yara"`
+	}
+	if err := json.Unmarshal(cfg, &parsed); err != nil {
+		t.Fatalf("config is not valid json: %v", err)
+	}
+
+	ye, ok := parsed.Schedule["yara_events"]
+	if !ok {
+		t.Fatal("yara_events query missing from schedule")
+	}
+	if ye.Interval != yaraEventsInterval {
+		t.Errorf("yara_events interval = %d, want %d", ye.Interval, yaraEventsInterval)
+	}
+	if !strings.Contains(ye.Query, "yara_events") || !strings.Contains(ye.Query, "count > 0") {
+		t.Errorf("yara_events query unexpected: %q", ye.Query)
+	}
+
+	cat, ok := parsed.FilePaths["siembox_yara"]
+	if !ok || len(cat) != len(paths) {
+		t.Errorf("file_paths category = %v, want %v", cat, paths)
+	}
+	if got := parsed.Yara.Signatures["siembox"]; len(got) != 1 || got[0] != sig {
+		t.Errorf("yara signatures = %v, want [%s]", got, sig)
+	}
+	if got := parsed.Yara.FilePaths["siembox_yara"]; len(got) != 1 || got[0] != "siembox" {
+		t.Errorf("yara file_paths mapping = %v, want [siembox]", got)
+	}
+}
+
+func TestBuildConfigWithYaraDisabledWhenNoPaths(t *testing.T) {
+	// A signature path but no watch paths should leave YARA off.
+	cfg, err := buildConfigWithYara(DefaultQueries(), "/some/sig.yar", nil)
+	if err != nil {
+		t.Fatalf("buildConfigWithYara: %v", err)
+	}
+	if strings.Contains(string(cfg), "yara_events") {
+		t.Error("yara should be disabled when no watch paths are given")
 	}
 }

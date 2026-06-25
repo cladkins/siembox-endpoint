@@ -30,6 +30,7 @@ import (
 	"github.com/cladkins/siembox-edr/internal/agent"
 	"github.com/cladkins/siembox-edr/internal/config"
 	"github.com/cladkins/siembox-edr/internal/detect"
+	"github.com/cladkins/siembox-edr/internal/detect/yara"
 	"github.com/cladkins/siembox-edr/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-edr/internal/transport"
 	"github.com/cladkins/siembox-edr/internal/util"
@@ -201,6 +202,16 @@ func runAgent(ctx context.Context, dir string, log *slog.Logger) error {
 		base, err := detect.DefaultRules()
 		if err != nil {
 			return fmt.Errorf("load default rules: %w", err)
+		}
+		// YARA file-detection: materialize the embedded baseline signatures and
+		// point osquery's yara_events at the drop-spot directories. A YARA hit
+		// flows through the Sigma engine via the yara_events query like any other
+		// telemetry. Failure here is non-fatal: detection still runs without YARA.
+		if sigPath, err := yara.WriteSignatures(filepath.Join(dir, "yara")); err != nil {
+			log.Warn("yara signatures unavailable; file detection disabled", "err", err)
+		} else {
+			osq.WithYara(sigPath, nil)
+			log.Info("yara file detection enabled", "signatures", sigPath)
 		}
 		a.WithEngine(detect.NewSigmaEngine(osq, base, log))
 		log.Info("detection enabled", "engine", "sigma", "default_rules", len(base))

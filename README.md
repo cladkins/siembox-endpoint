@@ -69,6 +69,32 @@ locations (`/usr/local/bin`, `/opt/homebrew/bin`, the official macOS osquery
 path), so `check`/detection work under `sudo`/launchd. Configure the binary via
 `osquery_binary` in `agent.json`.
 
+#### YARA file detection
+
+The background service also runs YARA over files as they are created or modified
+in common malware drop / persistence directories (temp dirs, user Downloads,
+local bin, autostart locations — see `DefaultYaraPaths` in
+`internal/telemetry/osquery`). It uses osquery's `yara_events` table backed by a
+signature file the agent materializes to `<state-dir>/yara/siembox.yar`. A small
+baseline rule set is embedded in the binary (so a fresh, offline agent detects on
+day one); the SIEMBox server delivers the full curated rule packs (planned). A
+match becomes a `high` detection event via the `siembox-yara-file-match` Sigma
+rule. YARA detection runs only under the background service (`run`/`start`), not
+the one-shot `check`.
+
+**Self-test:** the embedded baseline includes a harmless rule that matches the
+marker string `SIEMBOX_YARA_SELFTEST`. With the service running, write that
+string to a file in a watched directory to confirm the pipeline end-to-end:
+
+```sh
+echo 'SIEMBOX_YARA_SELFTEST' > ~/Downloads/siembox-yara-selftest.txt   # macOS
+echo 'SIEMBOX_YARA_SELFTEST' > /tmp/siembox-yara-selftest.txt          # Linux
+```
+
+Within ~30s a `siembox-yara-file-match` detection should fire (visible in the
+agent's verbose log, and shipped to SIEMBox once the server side exists). Delete
+the file afterward.
+
 ## How it talks to SIEMBox
 
 The agent speaks the HTTP API documented in **[`docs/EDR_API.md`](docs/EDR_API.md)**

