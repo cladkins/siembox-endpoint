@@ -5,30 +5,51 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 // FindBinary resolves an executable by name. It checks, in order: an explicit
 // path (if name contains a separator), the PATH, then each of extraDirs. This
-// matters under sudo/launchd, where PATH is often minimal and tools installed
-// in /usr/local/bin or /opt/homebrew/bin are otherwise missed. It returns the
+// matters under sudo/launchd/Windows services, where PATH is often minimal and
+// tools installed in /usr/local/bin, /opt/homebrew/bin, or C:\Program Files\…
+// are otherwise missed. On Windows it also tries the ".exe" suffix when probing
+// explicit paths and extraDirs (LookPath already handles PATHEXT). Returns the
 // resolved path and true, or the original name and false if not found.
 func FindBinary(name string, extraDirs []string) (string, bool) {
 	if strings.ContainsAny(name, `/\`) {
-		if fi, err := os.Stat(name); err == nil && !fi.IsDir() {
-			return name, true
+		if p, ok := statExec(name); ok {
+			return p, true
 		}
 	}
 	if p, err := exec.LookPath(name); err == nil {
 		return p, true
 	}
 	for _, d := range extraDirs {
-		cand := filepath.Join(d, name)
-		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
-			return cand, true
+		if p, ok := statExec(filepath.Join(d, name)); ok {
+			return p, true
 		}
 	}
 	return name, false
+}
+
+// statExec returns the path (and true) if it is an existing non-directory file.
+// On Windows it also tries path+".exe" when the path lacks an .exe extension.
+func statExec(path string) (string, bool) {
+	if isRegularFile(path) {
+		return path, true
+	}
+	if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(path), ".exe") {
+		if exe := path + ".exe"; isRegularFile(exe) {
+			return exe, true
+		}
+	}
+	return "", false
+}
+
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
 }
 
 // StderrText extracts the captured stderr from a failed exec.Cmd.Output() call.
