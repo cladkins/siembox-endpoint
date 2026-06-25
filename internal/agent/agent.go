@@ -356,6 +356,13 @@ func (a *Agent) batchEvents(ctx context.Context, in <-chan models.Event) {
 			flush()
 			return
 		case ev := <-in:
+			// Log every detection as it's produced so the running service is
+			// observable (otherwise detections ship silently to the server).
+			a.log.Info("detection",
+				"title", ev.Title,
+				"severity", ev.Severity,
+				"rule_id", ev.RuleID,
+				"source", ev.Source)
 			buf = append(buf, ev)
 			if len(buf) >= eventBatchMax {
 				flush()
