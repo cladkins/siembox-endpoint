@@ -54,6 +54,13 @@ var (
 func main() { systray.Run(onReady, func() {}) }
 
 func onReady() {
+	// Clear a stale TMPDIR before any os.TempDir() use (e.g. staging the config
+	// in configureServer). When the menu bar app is launched by the pkg
+	// post-install it inherits TMPDIR pointing at the installer's
+	// PKInstallSandbox temp, which macOS deletes after install — leaving every
+	// os.TempDir() write failing with "no such file or directory".
+	util.EnsureSaneTmpdir()
+
 	systray.SetTitle("SIEMBox")
 	systray.SetTooltip("SIEMBox EDR agent")
 
