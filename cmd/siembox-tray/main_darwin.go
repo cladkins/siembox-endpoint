@@ -313,14 +313,58 @@ func notify(msg string) {
 
 func nowStamp() string { return time.Now().Format("15:04:05") }
 
-// failureReason extracts the most useful error text from a failed command:
-// the subprocess's stderr if present (grype/osquery write real errors there),
-// otherwise the Go error.
+// failureReason extracts the most useful error text from a failed command. The
+// agent logs via slog to stderr, so the stderr starts with INFO lines; we pull
+// the actual error rather than naively taking the first line.
 func failureReason(err error) string {
-	if s := util.StderrText(err); s != "" {
-		return s
+	s := util.StderrText(err)
+	if s == "" {
+		return err.Error()
 	}
-	return err.Error()
+	return bestErrorLine(s)
+}
+
+// bestErrorLine finds the most informative line in captured stderr: the value
+// of a slog err="…" field (further reduced to the trailing "ERROR …" message if
+// present), else a level=ERROR line, else the last non-empty line.
+func bestErrorLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
+			continue
+		}
+		if v := errField(l); v != "" {
+			return v
+		}
+		if strings.Contains(l, "level=ERROR") {
+			return l
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
+// errField returns the slog err="…" value from a line, trimmed to the trailing
+// "ERROR …" message (the real cause) when the wrapped error embeds one.
+func errField(l string) string {
+	const k = `err="`
+	i := strings.Index(l, k)
+	if i < 0 {
+		return ""
+	}
+	v := l[i+len(k):]
+	if j := strings.LastIndex(v, `"`); j >= 0 {
+		v = v[:j]
+	}
+	if e := strings.LastIndex(v, "ERROR "); e >= 0 {
+		return strings.TrimSpace(v[e+len("ERROR "):])
+	}
+	return v
 }
 
 // firstLine returns a trimmed, length-capped first line for a notification.

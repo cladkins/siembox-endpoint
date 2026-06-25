@@ -38,3 +38,20 @@ func TestFindBinaryNotFound(t *testing.T) {
 		t.Errorf("expected not found, got %q", got)
 	}
 }
+
+func TestEnsureSaneTmpdir(t *testing.T) {
+	// A missing TMPDIR dir should be cleared.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "deleted-sandbox"))
+	EnsureSaneTmpdir()
+	if v := os.Getenv("TMPDIR"); v != "" {
+		t.Errorf("expected TMPDIR cleared for missing dir, got %q", v)
+	}
+
+	// An existing TMPDIR dir should be left as-is.
+	good := t.TempDir()
+	t.Setenv("TMPDIR", good)
+	EnsureSaneTmpdir()
+	if v := os.Getenv("TMPDIR"); v != good {
+		t.Errorf("expected TMPDIR preserved, got %q want %q", v, good)
+	}
+}

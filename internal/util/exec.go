@@ -52,6 +52,22 @@ func isRegularFile(path string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// EnsureSaneTmpdir clears TMPDIR if it points at a directory that no longer
+// exists. A process launched by the macOS installer (e.g. the menu bar app,
+// started from the pkg post-install) inherits TMPDIR pointing at the installer's
+// PKInstallSandbox temp, which macOS deletes after install. Tools like grype
+// create temp files in TMPDIR and fail hard when it's missing; unsetting it
+// falls back to the OS default (/tmp).
+func EnsureSaneTmpdir() {
+	td := os.Getenv("TMPDIR")
+	if td == "" {
+		return
+	}
+	if fi, err := os.Stat(td); err != nil || !fi.IsDir() {
+		_ = os.Unsetenv("TMPDIR")
+	}
+}
+
 // StderrText extracts the captured stderr from a failed exec.Cmd.Output() call.
 // exec.Cmd.Output populates ExitError.Stderr when Cmd.Stderr is nil, but the
 // default error string omits it; this surfaces the real diagnostic.
