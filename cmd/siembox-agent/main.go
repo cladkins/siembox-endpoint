@@ -165,11 +165,13 @@ func statusString(s service.Status) string {
 }
 
 // runAgent loads config, wires the scanner/detection engine, and runs the agent
-// until ctx is cancelled. Shared by the service and foreground `run`.
+// until ctx is cancelled. Shared by the service and foreground `run`. If the
+// agent is not configured yet (no server_url), it idles and re-checks rather
+// than exiting, so the service starts cleanly and waits for configuration.
 func runAgent(ctx context.Context, dir string, log *slog.Logger) error {
-	state, err := config.Load(dir)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+	state := waitForConfig(ctx, dir, log)
+	if state == nil {
+		return nil // ctx cancelled while waiting
 	}
 
 	spool, err := transport.NewSpool(filepath.Join(dir, "spool"))
@@ -205,6 +207,29 @@ func runAgent(ctx context.Context, dir string, log *slog.Logger) error {
 	}
 
 	return a.Run(ctx)
+}
+
+// waitForConfig returns the loaded state once the agent is configured
+// (server_url present), re-checking periodically. Returns nil if ctx is
+// cancelled first. This lets the service start and idle before it's configured.
+func waitForConfig(ctx context.Context, dir string, log *slog.Logger) *config.State {
+	warned := false
+	for {
+		state, err := config.Load(dir)
+		if err == nil {
+			return state
+		}
+		if !warned {
+			log.Warn("agent not configured yet; idling until server_url + enrollment_token are set "+
+				"(use the menu bar app's \"Configure Server…\", or edit agent.json)", "err", err)
+			warned = true
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(30 * time.Second):
+		}
+	}
 }
 
 // --- one-shot commands (no server, no enrollment) ---

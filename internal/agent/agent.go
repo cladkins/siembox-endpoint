@@ -80,8 +80,8 @@ func (a *Agent) WithEngine(e detect.Engine) *Agent { a.engine = e; return a }
 // Run enrolls if needed and then runs all loops until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
 	if !a.state.Enrolled() {
-		if err := a.enroll(ctx); err != nil {
-			return fmt.Errorf("enroll: %w", err)
+		if err := a.enrollWithRetry(ctx); err != nil {
+			return err // only returns on ctx cancellation
 		}
 	}
 	a.log.Info("agent running", "agent_id", a.state.Identity.AgentID, "version", version.Version)
@@ -122,6 +122,32 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("shutting down")
 	wg.Wait()
 	return nil
+}
+
+// enrollWithRetry keeps trying to enroll with exponential backoff until it
+// succeeds or ctx is cancelled, so a missing token or an unreachable server
+// leaves the agent idling (and the service "running") rather than crash-looping.
+func (a *Agent) enrollWithRetry(ctx context.Context) error {
+	backoff := 5 * time.Second
+	const maxBackoff = 5 * time.Minute
+	for {
+		err := a.enroll(ctx)
+		if err == nil {
+			return nil
+		}
+		a.log.Warn("not enrolled yet; will retry", "err", err, "retry_in", backoff.String())
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
 }
 
 // enroll exchanges the enrollment token for a persisted identity.

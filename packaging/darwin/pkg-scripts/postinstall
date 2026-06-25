@@ -1,8 +1,8 @@
 #!/bin/sh
 # postinstall - run by the macOS Installer after files are laid down.
-# Seeds config from the template, installs osquery + grype if missing, and
-# registers the launchd service. The service is NOT started automatically:
-# configure agent.json (server_url + enrollment_token) first, then start it.
+# Seeds config from the template, installs osquery + grype if missing, registers
+# the launchd service, and launches the menu bar app. Configuration and
+# start/stop are then done from the menu bar app — no Terminal needed.
 set -e
 
 CONF_DIR="/Library/Application Support/SIEMBox/agent"
@@ -35,16 +35,11 @@ if ! command -v osqueryi >/dev/null 2>&1 \
 	rm -rf "$TMP"
 fi
 
-# Register the launchd service (start manually after configuring agent.json).
+# Register the launchd service. Everything else (configure server, start/stop,
+# run scans) is driven from the menu bar app — no Terminal needed. Full Disk
+# Access is intentionally NOT requested: scans are scoped to world-readable
+# software locations and the detection checks don't need it.
 "$BIN" -dir "$CONF_DIR" install || true
-
-# Full Disk Access guidance. The narrowed scan scope avoids most protected
-# paths, but background scans of some locations and certain osquery tables need
-# Full Disk Access for the daemon. macOS does not allow granting this
-# programmatically, so open the settings pane and point the user at it
-# (best-effort; may not surface from the installer's root context).
-/usr/bin/osascript -e 'display dialog "SIEMBox EDR is installed.\n\nFor full background scanning, grant Full Disk Access to siembox-agent in System Settings > Privacy & Security > Full Disk Access.\n\nThen set server_url + enrollment_token in:\n/Library/Application Support/SIEMBox/agent/agent.json\nand run: sudo siembox-agent start" buttons {"OK"} default button "OK"' >/dev/null 2>&1 || true
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFilesAccess" >/dev/null 2>&1 || true
 
 # Launch the menu bar app now for the logged-in user (it also auto-starts at
 # login via /Library/LaunchAgents/io.siembox.menubar.plist).

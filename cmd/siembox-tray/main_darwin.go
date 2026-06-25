@@ -1,9 +1,11 @@
 //go:build darwin
 
-// Command siembox-tray is the SIEMBox EDR macOS menu bar app: a lightweight
-// status-bar UI to run on-demand scans/checks, see status, and open config. It
-// shells out to the existing siembox-agent CLI (scan/check/status), so it needs
-// no privileged IPC. Built only on macOS (systray needs Cocoa + CGO).
+// Command siembox-tray is the SIEMBox EDR macOS menu bar app: the control
+// center for the agent. From the menu bar you can run on-demand scans/checks,
+// see status, configure the server, and start/stop the background service —
+// no CLI needed. Privileged actions (start/stop/configure) use the native
+// macOS admin-password prompt via osascript. Built only on macOS (systray
+// needs Cocoa + CGO).
 package main
 
 import (
@@ -13,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,9 +66,14 @@ func onReady() {
 	systray.AddSeparator()
 	mScan = systray.AddMenuItem("Run Vulnerability Scan", "Scan installed software for known CVEs")
 	mCheck = systray.AddMenuItem("Run Detection Check", "Evaluate host telemetry against detection rules")
-	mRefresh := systray.AddMenuItem("Refresh Status", "Re-check the service status")
 
 	systray.AddSeparator()
+	mConfigure := systray.AddMenuItem("Configure Server…", "Set the SIEMBox server URL and enrollment token")
+	mStart := systray.AddMenuItem("Start Background Service", "Start the continuous monitoring service")
+	mStop := systray.AddMenuItem("Stop Background Service", "Stop the continuous monitoring service")
+
+	systray.AddSeparator()
+	mRefresh := systray.AddMenuItem("Refresh Status", "Re-check the service status")
 	mConfig := systray.AddMenuItem("Reveal Config in Finder", "Open the agent config directory")
 	mQuit := systray.AddMenuItem("Quit", "Quit the menu bar app")
 
@@ -78,6 +86,12 @@ func onReady() {
 				go runScan()
 			case <-mCheck.ClickedCh:
 				go runCheck()
+			case <-mConfigure.ClickedCh:
+				go configureServer()
+			case <-mStart.ClickedCh:
+				go controlService("start", "Starting background service…")
+			case <-mStop.ClickedCh:
+				go controlService("stop", "Stopping background service…")
 			case <-mRefresh.ClickedCh:
 				go refreshStatus()
 			case <-mConfig.ClickedCh:
@@ -156,9 +170,84 @@ func runCheck() {
 	notify(fmt.Sprintf("Detection check complete: %d detections", n))
 }
 
+// controlService runs `siembox-agent <action>` (start/stop) with administrator
+// privileges via the native macOS auth prompt, then refreshes status.
+func controlService(action, progressMsg string) {
+	notify(progressMsg)
+	cmd := shellQuote(agentBinary()) + " " + action
+	if err := runPrivileged(cmd); err != nil {
+		notify(fmt.Sprintf("Failed to %s the service (admin cancelled or error)", action))
+		return
+	}
+	notify("Service " + action + " requested")
+	time.Sleep(time.Second) // give launchd a moment
+	refreshStatus()
+}
+
+// configureServer prompts for the server URL + enrollment token and writes
+// agent.json (root-owned, 0600) via an administrator-privileged copy.
+func configureServer() {
+	url, ok := promptText("Enter your SIEMBox server URL (e.g. https://siembox.local:8421):", "https://")
+	if !ok || strings.TrimSpace(url) == "" {
+		return
+	}
+	token, ok := promptText("Enter the enrollment token from the SIEMBox UI:", "")
+	if !ok || strings.TrimSpace(token) == "" {
+		return
+	}
+
+	cfgDir := config.DefaultDir()
+	cfgPath := filepath.Join(cfgDir, "agent.json")
+	body := fmt.Sprintf("{\n  \"server_url\": %q,\n  \"enrollment_token\": %q,\n  \"ca_cert_path\": \"\",\n  \"insecure_skip_verify\": false\n}\n",
+		strings.TrimSpace(url), strings.TrimSpace(token))
+
+	tmp := filepath.Join(os.TempDir(), "siembox-agent.json")
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		notify("Could not stage config: " + err.Error())
+		return
+	}
+	defer os.Remove(tmp)
+
+	cmd := fmt.Sprintf("mkdir -p %s && cp %s %s && chmod 600 %s",
+		shellQuote(cfgDir), shellQuote(tmp), shellQuote(cfgPath), shellQuote(cfgPath))
+	if err := runPrivileged(cmd); err != nil {
+		notify("Configuration cancelled or failed")
+		return
+	}
+	notify("Server configured. Use “Start Background Service” to begin monitoring.")
+}
+
 // revealConfig opens the agent's config directory in Finder.
 func revealConfig() {
 	_ = exec.Command("open", config.DefaultDir()).Start()
+}
+
+// runPrivileged runs a shell command with administrator privileges via the
+// native macOS auth dialog. Returns an error if the user cancels or it fails.
+func runPrivileged(shellCmd string) error {
+	script := fmt.Sprintf("do shell script %q with administrator privileges", shellCmd)
+	return exec.Command("osascript", "-e", script).Run()
+}
+
+// promptText shows a text-input dialog and returns the entered value. ok is
+// false if the user cancelled.
+func promptText(prompt, def string) (string, bool) {
+	script := fmt.Sprintf("display dialog %q default answer %q with title \"SIEMBox EDR\"", prompt, def)
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		return "", false // user cancelled (osascript exits non-zero)
+	}
+	const marker = "text returned:"
+	s := string(out)
+	if i := strings.Index(s, marker); i >= 0 {
+		return strings.TrimSpace(s[i+len(marker):]), true
+	}
+	return "", false
+}
+
+// shellQuote single-quotes a string for safe embedding in a /bin/sh command.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // notify shows a macOS notification via osascript.
