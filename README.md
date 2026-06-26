@@ -74,7 +74,7 @@ path), so `check`/detection work under `sudo`/launchd. Configure the binary via
 The background service periodically scans common malware drop / persistence
 directories (temp dirs, user Downloads, local bin, autostart locations — see
 `DefaultYaraPaths` in `internal/telemetry/osquery`) with YARA. It uses osquery's
-on-demand `yara` table (a scheduled scan, every ~2 min) against a signature file
+on-demand `yara` table (a scheduled scan, every ~60s) against a signature file
 the agent materializes to `<state-dir>/yara/siembox.yar`. A scheduled scan is
 used rather than the evented `yara_events`/FSEvents file-monitor because the
 latter silently delivers nothing on macOS without Full Disk Access; the scan
@@ -94,8 +94,10 @@ echo 'SIEMBOX_YARA_SELFTEST' > ~/Downloads/siembox-yara-selftest.txt   # macOS
 echo 'SIEMBOX_YARA_SELFTEST' > /tmp/siembox-yara-selftest.txt          # Linux
 ```
 
-Within one scan interval (~2 min) a `siembox-yara-file-match` detection fires
+Within one scan interval (~60s) a `siembox-yara-file-match` detection fires
 (logged by the running agent and shipped to SIEMBox). Delete the file afterward.
+Re-testing the same file won't re-fire (the scan is differential) — use a fresh
+filename or delete it, let one scan pass, then recreate it.
 
 ## How it talks to SIEMBox
 

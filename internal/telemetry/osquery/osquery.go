@@ -229,28 +229,29 @@ func buildConfig(queries []Query) ([]byte, error) {
 // because osquery's FSEvents-based file monitoring is unreliable on macOS
 // without Full Disk Access (it silently delivers no events), whereas an
 // on-demand scan of the watched directories works the same on every OS.
-const yaraScanIntervalSec = 120
-
-// yaraSigGroup is the config-defined signature group the scan references.
-const yaraSigGroup = "siembox"
+// osquery runs a scheduled query at the END of each interval, so this also
+// bounds how soon a newly-dropped file is detected.
+const yaraScanIntervalSec = 60
 
 // buildYaraScanQuery builds the scheduled query that scans the watched paths
 // with the on-demand yara table. osquery's yara table interprets "%" as a
 // single path level and "%%" as recursive (the same globbing as file_paths), so
-// the FIM-style globs in paths translate directly into LIKE clauses. count>0
-// keeps only matches; differential mode emits each new match once.
-func buildYaraScanQuery(paths []string) string {
+// the FIM-style globs in paths translate directly into LIKE clauses. The
+// signature file is referenced directly with sigfile (rather than a config
+// sig_group) because that is the form verified to match on the target host.
+// count>0 keeps only matches; differential mode emits each new match once.
+func buildYaraScanQuery(paths []string, sigPath string) string {
 	likes := make([]string, 0, len(paths))
 	for _, p := range paths {
 		likes = append(likes, fmt.Sprintf("path LIKE '%s'", p))
 	}
-	return fmt.Sprintf("SELECT path, matches, count FROM yara WHERE (%s) AND sig_group='%s' AND count > 0;",
-		strings.Join(likes, " OR "), yaraSigGroup)
+	return fmt.Sprintf("SELECT path, matches, count FROM yara WHERE (%s) AND sigfile='%s' AND count > 0;",
+		strings.Join(likes, " OR "), sigPath)
 }
 
 // buildConfigWithYara renders the osquery config. When yaraSigPath and yaraPaths
-// are set it registers the signature group and a scheduled "yara_scan" query
-// that scans the watched directories against it, surfacing matches as telemetry.
+// are set it adds a scheduled "yara_scan" query that scans the watched
+// directories against the signature file, surfacing matches as telemetry.
 func buildConfigWithYara(queries []Query, yaraSigPath string, yaraPaths []string) ([]byte, error) {
 	type sched struct {
 		Query    string `json:"query"`
@@ -272,10 +273,7 @@ func buildConfigWithYara(queries []Query, yaraSigPath string, yaraPaths []string
 	}
 
 	if yaraSigPath != "" && len(yaraPaths) > 0 {
-		schedule["yara_scan"] = sched{Query: buildYaraScanQuery(yaraPaths), Interval: yaraScanIntervalSec, Snapshot: false}
-		cfg["yara"] = map[string]any{
-			"signatures": map[string]any{yaraSigGroup: []string{yaraSigPath}},
-		}
+		schedule["yara_scan"] = sched{Query: buildYaraScanQuery(yaraPaths, yaraSigPath), Interval: yaraScanIntervalSec, Snapshot: false}
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")

@@ -94,9 +94,6 @@ func TestBuildConfigWithYara(t *testing.T) {
 			Query    string `json:"query"`
 			Interval int    `json:"interval"`
 		} `json:"schedule"`
-		Yara struct {
-			Signatures map[string][]string `json:"signatures"`
-		} `json:"yara"`
 	}
 	if err := json.Unmarshal(cfg, &parsed); err != nil {
 		t.Fatalf("config is not valid json: %v", err)
@@ -109,20 +106,18 @@ func TestBuildConfigWithYara(t *testing.T) {
 	if ys.Interval != yaraScanIntervalSec {
 		t.Errorf("yara_scan interval = %d, want %d", ys.Interval, yaraScanIntervalSec)
 	}
-	// Scans the on-demand yara table over each watched path, matches only.
+	// Scans the on-demand yara table over each watched path, against the
+	// signature file directly (sigfile), matches only.
 	if !strings.Contains(ys.Query, "FROM yara ") {
 		t.Errorf("yara_scan should use the on-demand yara table: %q", ys.Query)
 	}
-	if !strings.Contains(ys.Query, "sig_group='siembox'") || !strings.Contains(ys.Query, "count > 0") {
+	if !strings.Contains(ys.Query, "sigfile='"+sig+"'") || !strings.Contains(ys.Query, "count > 0") {
 		t.Errorf("yara_scan query unexpected: %q", ys.Query)
 	}
 	for _, p := range paths {
 		if !strings.Contains(ys.Query, "path LIKE '"+p+"'") {
 			t.Errorf("yara_scan query missing path %q: %s", p, ys.Query)
 		}
-	}
-	if got := parsed.Yara.Signatures["siembox"]; len(got) != 1 || got[0] != sig {
-		t.Errorf("yara signatures = %v, want [%s]", got, sig)
 	}
 }
 
