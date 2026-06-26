@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-edr/internal/telemetry"
 )
 
 // Engine evaluates host telemetry against loaded rules and emits detections.
@@ -18,6 +19,10 @@ type Engine interface {
 	// Run starts the engine, streaming detections to out until ctx is
 	// cancelled. Implementations block until ctx is done.
 	Run(ctx context.Context, out chan<- models.Event) error
+	// Evaluate runs the loaded rules against a batch of records and returns the
+	// resulting detection events, without needing a streaming source. Used for
+	// on-demand scans (e.g. the agent's YARA scan).
+	Evaluate(ctx context.Context, records []telemetry.Record) []models.Event
 }
 
 // NoopEngine satisfies Engine without producing detections. It lets the agent
@@ -32,3 +37,6 @@ func (NoopEngine) Run(ctx context.Context, _ chan<- models.Event) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
+
+// Evaluate implements Engine: it produces no detections.
+func (NoopEngine) Evaluate(context.Context, []telemetry.Record) []models.Event { return nil }

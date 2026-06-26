@@ -1,6 +1,7 @@
 package osquery
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -82,52 +83,59 @@ func TestBuildConfig(t *testing.T) {
 	}
 }
 
-func TestBuildConfigWithYara(t *testing.T) {
-	sig := "/etc/siembox-agent/yara/siembox.yar"
+func TestBuildYaraScanQuery(t *testing.T) {
+	sig := "/Library/Application Support/SIEMBox/agent/yara/siembox.yar"
 	paths := []string{"/tmp/%%", "/usr/local/bin/%%"}
-	cfg, err := buildConfigWithYara(DefaultQueries(), sig, paths)
-	if err != nil {
-		t.Fatalf("buildConfigWithYara: %v", err)
-	}
-	var parsed struct {
-		Schedule map[string]struct {
-			Query    string `json:"query"`
-			Interval int    `json:"interval"`
-		} `json:"schedule"`
-	}
-	if err := json.Unmarshal(cfg, &parsed); err != nil {
-		t.Fatalf("config is not valid json: %v", err)
-	}
+	q := buildYaraScanQuery(paths, sig)
 
-	ys, ok := parsed.Schedule["yara_scan"]
-	if !ok {
-		t.Fatal("yara_scan query missing from schedule")
+	if !strings.Contains(q, "FROM yara ") {
+		t.Errorf("should use the on-demand yara table: %q", q)
 	}
-	if ys.Interval != yaraScanIntervalSec {
-		t.Errorf("yara_scan interval = %d, want %d", ys.Interval, yaraScanIntervalSec)
-	}
-	// Scans the on-demand yara table over each watched path, against the
-	// signature file directly (sigfile), matches only.
-	if !strings.Contains(ys.Query, "FROM yara ") {
-		t.Errorf("yara_scan should use the on-demand yara table: %q", ys.Query)
-	}
-	if !strings.Contains(ys.Query, "sigfile='"+sig+"'") || !strings.Contains(ys.Query, "count > 0") {
-		t.Errorf("yara_scan query unexpected: %q", ys.Query)
+	if !strings.Contains(q, "sigfile='"+sig+"'") || !strings.Contains(q, "count > 0") {
+		t.Errorf("query unexpected: %q", q)
 	}
 	for _, p := range paths {
-		if !strings.Contains(ys.Query, "path LIKE '"+p+"'") {
-			t.Errorf("yara_scan query missing path %q: %s", p, ys.Query)
+		if !strings.Contains(q, "path LIKE '"+p+"'") {
+			t.Errorf("query missing path %q: %s", p, q)
 		}
 	}
 }
 
-func TestBuildConfigWithYaraDisabledWhenNoPaths(t *testing.T) {
-	// A signature path but no watch paths should leave YARA off.
-	cfg, err := buildConfigWithYara(DefaultQueries(), "/some/sig.yar", nil)
-	if err != nil {
-		t.Fatalf("buildConfigWithYara: %v", err)
+func TestRunYaraScanParsesRows(t *testing.T) {
+	fake := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte(`[{"path":"/tmp/x","matches":"SIEMBox_YARA_SelfTest","count":"1"}]`), nil
 	}
-	if strings.Contains(string(cfg), "yara_scan") {
-		t.Error("yara should be disabled when no watch paths are given")
+	recs, err := runYaraScanWith(context.Background(), fake, "osqueryi",
+		[]string{"/tmp/%%"}, "/sig/siembox.yar")
+	if err != nil {
+		t.Fatalf("runYaraScanWith: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	r := recs[0]
+	if r.Query != "yara_scan" || r.Action != "added" {
+		t.Errorf("record meta = %q/%q, want yara_scan/added", r.Query, r.Action)
+	}
+	if r.Columns["path"] != "/tmp/x" || r.Columns["matches"] != "SIEMBox_YARA_SelfTest" {
+		t.Errorf("columns = %v", r.Columns)
+	}
+}
+
+func TestRunYaraScanDisabled(t *testing.T) {
+	called := false
+	fake := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		called = true
+		return []byte("[]"), nil
+	}
+	// No paths or no sigfile => disabled, runner not invoked.
+	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", nil, "/sig.yar"); err != nil || recs != nil {
+		t.Errorf("expected nil,nil for no paths; got %v,%v", recs, err)
+	}
+	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", []string{"/tmp/%%"}, ""); err != nil || recs != nil {
+		t.Errorf("expected nil,nil for no sigfile; got %v,%v", recs, err)
+	}
+	if called {
+		t.Error("runner should not be called when YARA is disabled")
 	}
 }

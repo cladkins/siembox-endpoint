@@ -212,18 +212,20 @@ func runAgent(ctx context.Context, dir string, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("load default rules: %w", err)
 		}
+		a.WithEngine(detect.NewSigmaEngine(osq, base, log))
+		log.Info("detection enabled", "engine", "sigma", "default_rules", len(base))
+
 		// YARA file-detection: materialize the embedded baseline signatures and
-		// point osquery's yara_events at the drop-spot directories. A YARA hit
-		// flows through the Sigma engine via the yara_events query like any other
-		// telemetry. Failure here is non-fatal: detection still runs without YARA.
+		// have the agent scan the drop-spot directories on demand via osqueryi
+		// (startup + every YaraScanIntervalSec). This runs detection immediately
+		// and on a cadence the agent controls/logs, instead of relying on an
+		// osqueryd scheduled query. Failure here is non-fatal.
 		if sigPath, err := yara.WriteSignatures(filepath.Join(dir, "yara")); err != nil {
 			log.Warn("yara signatures unavailable; file detection disabled", "err", err)
 		} else {
-			osq.WithYara(sigPath, nil)
-			log.Info("yara file detection enabled", "signatures", sigPath)
+			a.WithYaraScan(osqueryiBinary(state.Settings.OsqueryBinary), sigPath, nil)
+			log.Info("yara file detection enabled", "signatures", sigPath, "interval_sec", osquery.YaraScanIntervalSec)
 		}
-		a.WithEngine(detect.NewSigmaEngine(osq, base, log))
-		log.Info("detection enabled", "engine", "sigma", "default_rules", len(base))
 	} else {
 		log.Warn("osqueryd not found on PATH; detection disabled (install osquery to enable)")
 	}

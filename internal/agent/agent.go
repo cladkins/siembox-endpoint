@@ -17,6 +17,8 @@ import (
 	"github.com/cladkins/siembox-edr/internal/detect/yara"
 	"github.com/cladkins/siembox-edr/internal/inventory"
 	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-edr/internal/telemetry"
+	"github.com/cladkins/siembox-edr/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-edr/internal/transport"
 	"github.com/cladkins/siembox-edr/internal/version"
 	"github.com/cladkins/siembox-edr/internal/vuln"
@@ -52,6 +54,11 @@ type Agent struct {
 	// restartDetection signals the detection supervisor to stop and restart the
 	// engine (re-reading the on-disk YARA signature file) after a rule update.
 	restartDetection chan struct{}
+
+	// YARA scan config (agent-driven, via osqueryi). Empty sigPath disables it.
+	yaraOsqueryi string
+	yaraSigPath  string
+	yaraPaths    []string
 }
 
 // New constructs an Agent from loaded state. The transport client is created
@@ -84,6 +91,20 @@ func (a *Agent) WithScanner(s vuln.Scanner) *Agent { a.scanner = s; return a }
 // WithEngine overrides the detection engine backend.
 func (a *Agent) WithEngine(e detect.Engine) *Agent { a.engine = e; return a }
 
+// WithYaraScan enables the agent-driven YARA scan: it runs an on-demand osqueryi
+// scan of paths against sigPath at startup and every YaraScanIntervalSec,
+// evaluating matches through the engine. osqueryiBin/paths empty fall back to
+// sensible defaults; empty sigPath leaves YARA disabled.
+func (a *Agent) WithYaraScan(osqueryiBin, sigPath string, paths []string) *Agent {
+	a.yaraOsqueryi = osqueryiBin
+	a.yaraSigPath = sigPath
+	if len(paths) == 0 {
+		paths = osquery.DefaultYaraPaths()
+	}
+	a.yaraPaths = paths
+	return a
+}
+
 // Run enrolls if needed and then runs all loops until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
 	if !a.state.Enrolled() {
@@ -102,6 +123,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	select {
 	case <-a.restartDetection:
 	default:
+	}
+
+	// Load rules up front so the YARA scan (which evaluates on demand) has them
+	// before its first run; runDetection also (re)loads them.
+	if err := a.engine.LoadRules(a.state.Identity.Config.Rules); err != nil {
+		a.log.Warn("load rules", "err", err)
 	}
 
 	// Send an inventory snapshot immediately on startup.
@@ -127,6 +154,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	run(func() { a.tick(ctx, spoolFlushSec, a.flushSpool) })
 	run(func() { a.batchEvents(ctx, events) })
 	run(func() { a.runDetection(ctx, events) })
+	run(func() { a.runYaraScans(ctx, events) })
 
 	<-ctx.Done()
 	a.log.Info("shutting down")
@@ -234,6 +262,55 @@ func (a *Agent) runDetection(ctx context.Context, events chan<- models.Event) {
 				return
 			case <-time.After(5 * time.Second):
 			}
+		}
+	}
+}
+
+// runYaraScans runs the agent-driven YARA scan immediately on startup and then
+// every YaraScanIntervalSec, emitting a detection for each newly-seen matching
+// file. It uses osqueryi (RunYaraScan) rather than an osqueryd scheduled query
+// so detection runs right away and on a cadence the agent controls and logs.
+// Dedups by path so a persistent matching file is alerted once per agent run.
+func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
+	if a.yaraSigPath == "" || len(a.yaraPaths) == 0 {
+		return
+	}
+	seen := map[string]bool{}
+
+	scan := func() {
+		records, err := osquery.RunYaraScan(ctx, a.yaraOsqueryi, a.yaraPaths, a.yaraSigPath)
+		if err != nil {
+			a.log.Debug("yara scan failed", "err", err)
+			return
+		}
+		fresh := make([]telemetry.Record, 0, len(records))
+		for _, r := range records {
+			p := r.Columns["path"]
+			if p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			fresh = append(fresh, r)
+		}
+		a.log.Debug("yara scan complete", "matches", len(records), "new", len(fresh))
+		for _, ev := range a.engine.Evaluate(ctx, fresh) {
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+	scan() // immediate scan at startup (catches files already present)
+	ticker := time.NewTicker(time.Duration(osquery.YaraScanIntervalSec) * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			scan()
 		}
 	}
 }

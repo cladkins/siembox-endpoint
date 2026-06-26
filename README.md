@@ -71,18 +71,22 @@ path), so `check`/detection work under `sudo`/launchd. Configure the binary via
 
 #### YARA file detection
 
-The background service periodically scans common malware drop / persistence
-directories (temp dirs, user Downloads, local bin, autostart locations — see
-`DefaultYaraPaths` in `internal/telemetry/osquery`) with YARA. It uses osquery's
-on-demand `yara` table (a scheduled scan, every ~60s) against a signature file
-the agent materializes to `<state-dir>/yara/siembox.yar`. A scheduled scan is
-used rather than the evented `yara_events`/FSEvents file-monitor because the
-latter silently delivers nothing on macOS without Full Disk Access; the scan
-works the same on every OS and needs no special permissions. A small baseline
-rule set is embedded in the binary (so a fresh, offline agent detects on day
-one); the SIEMBox server delivers the full curated rule packs. A match becomes a
-`high` detection event via the `siembox-yara-file-match` Sigma rule. YARA
-detection runs only under the background service (`run`/`start`), not the
+The background service scans common malware drop / persistence directories
+(temp dirs, user Downloads, local bin, autostart locations — see
+`DefaultYaraPaths` in `internal/telemetry/osquery`) with YARA **at startup and
+every ~60s**. The agent drives the scan itself by invoking `osqueryi` against
+osquery's on-demand `yara` table (`internal/agent` → `osquery.RunYaraScan`),
+matching files against a signature file it materializes to
+`<state-dir>/yara/siembox.yar`. This agent-driven approach is used rather than an
+osqueryd scheduled query or the evented `yara_events`/FSEvents file-monitor: the
+FSEvents monitor silently delivers nothing on macOS without Full Disk Access, and
+the daemon's scheduled query was unreliable, whereas an on-demand `osqueryi` scan
+runs immediately, on a cadence the agent controls and logs, and works the same on
+every OS with no special permissions. A small baseline rule set is embedded in
+the binary (so a fresh, offline agent detects on day one); the SIEMBox server
+delivers the full curated rule packs. A match becomes a `high` detection event
+via the `siembox-yara-file-match` Sigma rule (deduped by path per agent run).
+YARA detection runs only under the background service (`run`/`start`), not the
 one-shot `check`.
 
 **Self-test:** the embedded baseline includes a harmless rule that matches the
@@ -94,10 +98,11 @@ echo 'SIEMBOX_YARA_SELFTEST' > ~/Downloads/siembox-yara-selftest.txt   # macOS
 echo 'SIEMBOX_YARA_SELFTEST' > /tmp/siembox-yara-selftest.txt          # Linux
 ```
 
-Within one scan interval (~60s) a `siembox-yara-file-match` detection fires
-(logged by the running agent and shipped to SIEMBox). Delete the file afterward.
-Re-testing the same file won't re-fire (the scan is differential) — use a fresh
-filename or delete it, let one scan pass, then recreate it.
+A `siembox-yara-file-match` detection fires on the next scan — within ~60s, or
+immediately if you (re)start the agent after creating the file (it scans at
+startup). It's logged by the running agent and shipped to SIEMBox. Delete the
+file afterward. Re-testing won't re-fire for an already-seen path within the same
+agent run — use a fresh filename or restart the agent.
 
 ## How it talks to SIEMBox
 
