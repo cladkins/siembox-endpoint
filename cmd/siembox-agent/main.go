@@ -147,6 +147,15 @@ func runService(cmd, dir string, log *slog.Logger) error {
 		fmt.Println(statusString(st))
 		return nil
 	default: // install, uninstall, start, stop, restart
+		// On macOS, start/stop/restart use modern launchctl (the kardianos
+		// legacy load/unload fails with "Input/output error" on Big Sur+).
+		if handled, err := controlServiceOS(cmd); handled {
+			if err != nil {
+				return err
+			}
+			log.Info("service control ok", "action", cmd)
+			return nil
+		}
 		if err := service.Control(svc, cmd); err != nil {
 			return err
 		}
