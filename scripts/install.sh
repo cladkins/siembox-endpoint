@@ -1,7 +1,7 @@
 #!/bin/sh
-# install.sh - standalone installer for the SIEMBox EDR agent on Linux.
+# install.sh - standalone installer for the SIEMBox Endpoint agent on Linux.
 #
-#   curl -sSfL https://raw.githubusercontent.com/cladkins/SIEMBOX-EDR/main/scripts/install.sh | sudo sh
+#   curl -sSfL https://raw.githubusercontent.com/cladkins/siembox-endpoint/main/scripts/install.sh | sudo sh
 #
 # Downloads the latest release binary, installs osquery + grype if missing,
 # seeds a config template, and registers the system service. For .deb/.rpm
@@ -9,7 +9,7 @@
 # preferred; this script is the fallback for other distros.
 set -e
 
-REPO="cladkins/SIEMBOX-EDR"
+REPO="cladkins/siembox-endpoint"
 CONF_DIR=/etc/siembox-agent
 CONF_FILE="$CONF_DIR/agent.json"
 INSTALL_BIN=/usr/local/bin/siembox-agent
@@ -40,8 +40,8 @@ if [ -z "$TAG" ]; then
 fi
 VERSION=${TAG#v}
 
-# goreleaser archive name: siembox-edr_<version>_linux_<arch>.tar.gz
-ARCHIVE="siembox-edr_${VERSION}_${OS}_${ARCH}.tar.gz"
+# goreleaser archive name: siembox-endpoint_<version>_linux_<arch>.tar.gz
+ARCHIVE="siembox-endpoint_${VERSION}_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/$REPO/releases/download/$TAG/$ARCHIVE"
 
 TMP=$(mktemp -d)

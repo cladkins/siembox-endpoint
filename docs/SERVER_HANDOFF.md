@@ -1,15 +1,16 @@
-# SIEMBox EDR — Server-Side Implementation Handoff
+# SIEMBox Endpoint — Server-Side Implementation Handoff
 
-This brief is for the engineer/agent implementing the **server side** of SIEMBox
-EDR in the main **`cladkins/SIEMBOX`** repo (Node.js + TypeScript + Express,
-PostgreSQL/JSONB, API on port **8421**, Vue 3 + Element Plus UI on 8420).
+This brief is for the engineer/agent implementing the **server side** of the
+SIEMBox Endpoint feature in the main **`cladkins/SIEMBOX`** repo (Node.js +
+TypeScript + Express, PostgreSQL/JSONB, API on port **8421**, Vue 3 + Element
+Plus UI on 8420).
 
-The **endpoint agent is complete** (this repo, `cladkins/SIEMBOX-EDR`). It
+The **endpoint agent is complete** (this repo, `cladkins/siembox-endpoint`). It
 enrolls, reports inventory, scans for vulnerabilities (Grype), and detects
 threats (osquery + Sigma), shipping everything over HTTPS to the endpoints
 below. Nothing on the agent needs to change — it just needs a server to talk to.
 
-**Source of truth for the wire format:** [`docs/EDR_API.md`](EDR_API.md). The Go
+**Source of truth for the wire format:** [`docs/ENDPOINT_API.md`](ENDPOINT_API.md). The Go
 types are in `internal/models/models.go` (mirror them exactly).
 
 ---
@@ -53,7 +54,7 @@ Nuclei network-scan data SIEMBox already has.
 
 ## Endpoints (all under `/api/edr/`, port 8421)
 
-> Full field types and example payloads: [`docs/EDR_API.md`](EDR_API.md).
+> Full field types and example payloads: [`docs/ENDPOINT_API.md`](ENDPOINT_API.md).
 > Request bodies are JSON; respond `202 Accepted` for the ingest endpoints.
 
 ### `POST /api/edr/agents/enroll`  (no auth; body carries the token)
@@ -224,7 +225,7 @@ No new alert/vuln UI should be needed — endpoints feed the existing views.
 - **Rate/size limits:** `software[]` and `events[]`/`vulnerabilities[]` batches
   can be sizable; set reasonable body-size limits and paginate/stream if needed.
 - **Versioning:** keep request/response shapes in lockstep with
-  `internal/models/models.go`; if you change the contract, update `EDR_API.md`
+  `internal/models/models.go`; if you change the contract, update `ENDPOINT_API.md`
   and ping the agent side.
 
 ---

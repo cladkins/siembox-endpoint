@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/telemetry"
-	"github.com/cladkins/siembox-edr/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry"
+	"github.com/cladkins/siembox-endpoint/internal/util"
 )
 
 // osqueryExtraDirs are non-PATH locations to look for osquery binaries, which

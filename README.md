@@ -1,4 +1,4 @@
-# SIEMBox EDR
+# SIEMBox Endpoint
 
 A lightweight, cross-platform **endpoint agent** for [SIEMBox](https://github.com/cladkins/SIEMBOX).
 It brings endpoint visibility to SIEMBox by doing two jobs and shipping the
@@ -9,16 +9,16 @@ results back for correlation and analysis:
 2. **Scan the host for vulnerabilities** (Syft SBOM of installed packages +
    Grype CVE matching).
 
-This is an **EDR without the response** — by design it observes and reports; it
-does not take remediation actions on the endpoint, which keeps it simple and
-safe for homelab / self-hosted environments.
+By design it **observes and reports only** — it does not take remediation or
+response actions on the endpoint, which keeps it simple and safe for homelab /
+self-hosted environments.
 
 Targets: recent **macOS**, **Windows**, and **Ubuntu Server** (single static Go
 binary per platform, no runtime to install).
 
 ## Status
 
-Phased build (see `docs/EDR_API.md` for the wire contract):
+Phased build (see `docs/ENDPOINT_API.md` for the wire contract):
 
 - [x] **Phase 1 — agent skeleton**: enrollment, heartbeat, config polling,
   inventory reporting, offline-resilient spool transport, signal handling.
@@ -106,7 +106,7 @@ agent run — use a fresh filename or restart the agent.
 
 ## How it talks to SIEMBox
 
-The agent speaks the HTTP API documented in **[`docs/EDR_API.md`](docs/EDR_API.md)**
+The agent speaks the HTTP API documented in **[`docs/ENDPOINT_API.md`](docs/ENDPOINT_API.md)**
 (served by the SIEMBox backend on port 8421 under `/api/edr/*`). Endpoint
 detections land in SIEMBox's existing **alerts**, vulns in its existing
 **vulnerabilities** table, and each endpoint becomes an **asset** of type
@@ -120,7 +120,7 @@ SIEMBox already collects.
 
 **Linux (one-liner):**
 ```sh
-curl -sSfL https://raw.githubusercontent.com/cladkins/SIEMBOX-EDR/main/scripts/install.sh | sudo sh
+curl -sSfL https://raw.githubusercontent.com/cladkins/siembox-endpoint/main/scripts/install.sh | sudo sh
 ```
 Or install the native `.deb`/`.rpm` from a release — both fetch osquery + grype
 and register the service.
@@ -173,7 +173,7 @@ Service registration adapts to the host: systemd or SysV (Linux), launchd
 
 ## Uninstall
 
-- **macOS:** use the menu bar app's **Uninstall SIEMBox EDR…** item (removes the
+- **macOS:** use the menu bar app's **Uninstall SIEMBox Endpoint…** item (removes the
   service, menu bar app, binary, config, and package receipt), or run
   `sudo siembox-uninstall`.
 - **Windows:** uninstall from **Settings → Apps** (the MSI removes the service).

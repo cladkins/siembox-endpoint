@@ -1,6 +1,6 @@
 # Packaging
 
-Build artifacts and OS install integration for the SIEMBox EDR agent.
+Build artifacts and OS install integration for the SIEMBox Endpoint agent.
 
 ## Layout
 - `agent.json.template` — default config shipped to `/etc/siembox-agent/agent.json.template`.

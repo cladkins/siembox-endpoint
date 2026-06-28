@@ -1,5 +1,5 @@
 #!/bin/bash
-# build-tray-app.sh - build the SIEMBox EDR menu bar app and zip it for release.
+# build-tray-app.sh - build the SIEMBox Endpoint menu bar app and zip it for release.
 # Must run on macOS. The app is also bundled into the .pkg by build-pkg.sh; this
 # standalone zip is for manual / non-pkg installs.
 #

@@ -1,4 +1,4 @@
-# install.ps1 - SIEMBox EDR agent installer for Windows (Windows Service).
+# install.ps1 - SIEMBox Endpoint agent installer for Windows (Windows Service).
 #
 # Run in an ELEVATED PowerShell. Installs the agent, fetches grype + osquery
 # from their official release URLs (no winget/choco dependency), seeds a config
@@ -76,7 +76,7 @@ if (-not (Test-Path 'C:\Program Files\osquery\osqueryi.exe')) {
 & $InstallBin -dir "$ConfDir" install
 
 Write-Host ""
-Write-Host "SIEMBox EDR installed. Next:"
+Write-Host "SIEMBox Endpoint installed. Next:"
 Write-Host "  1. Edit $ConfFile (server_url + enrollment_token) when your server is ready."
 Write-Host "  2. Test now (no server needed):"
 Write-Host "       & '$InstallBin' scan      # vulnerability findings (JSON)"

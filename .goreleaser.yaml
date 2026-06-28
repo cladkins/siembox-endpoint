@@ -1,5 +1,5 @@
 version: 2
-project_name: siembox-edr
+project_name: siembox-endpoint
 
 before:
   hooks:
@@ -19,7 +19,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X github.com/cladkins/siembox-edr/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/cladkins/siembox-endpoint/internal/version.Version={{ .Version }}
 
 archives:
   - id: default
@@ -46,7 +46,7 @@ nfpms:
       - deb
       - rpm
     maintainer: cladkins
-    description: "SIEMBox EDR endpoint agent: vulnerability scanning and threat detection."
+    description: "SIEMBox Endpoint agent: vulnerability scanning and threat detection."
     license: MIT
     bindir: /usr/bin
     dependencies:

@@ -1,5 +1,5 @@
 #!/bin/bash
-# build-pkg.sh - build a macOS .pkg installer for the SIEMBox EDR agent.
+# build-pkg.sh - build a macOS .pkg installer for the SIEMBox Endpoint agent.
 #
 # Must run on macOS (uses lipo + pkgbuild). Produces a universal (amd64+arm64)
 # binary and a component package that installs the agent, seeds a config
@@ -19,7 +19,7 @@ OUT="$REPO_ROOT/dist"
 mkdir -p "$OUT"
 trap 'rm -rf "$ROOT" "$SCRIPTS"' EXIT
 
-LDFLAGS="-s -w -X github.com/cladkins/siembox-edr/internal/version.Version=${VERSION}"
+LDFLAGS="-s -w -X github.com/cladkins/siembox-endpoint/internal/version.Version=${VERSION}"
 
 echo "building universal binary (amd64 + arm64)..."
 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$ROOT/agent-amd64" ./cmd/siembox-agent
@@ -31,7 +31,7 @@ rm -f "$ROOT/agent-amd64" "$ROOT/agent-arm64"
 chmod 0755 "$ROOT/usr/local/bin/siembox-agent"
 
 # Ship the uninstaller so the menu bar app's "Uninstall" item (and CLI users)
-# can fully remove SIEMBox EDR.
+# can fully remove SIEMBox Endpoint.
 cp packaging/darwin/uninstall.sh "$ROOT/usr/local/bin/siembox-uninstall"
 chmod 0755 "$ROOT/usr/local/bin/siembox-uninstall"
 

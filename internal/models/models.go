@@ -1,6 +1,6 @@
-// Package models defines the wire types exchanged between the SIEMBox EDR
+// Package models defines the wire types exchanged between the SIEMBox Endpoint
 // agent and the SIEMBox server's /api/edr/* endpoints. These types are the
-// Go-side mirror of the contract documented in docs/EDR_API.md and must stay
+// Go-side mirror of the contract documented in docs/ENDPOINT_API.md and must stay
 // in sync with the server implementation.
 package models
 

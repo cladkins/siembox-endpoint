@@ -2,7 +2,7 @@ title: Process Executing From Temporary Directory
 id: siembox-proc-temp-exec
 status: experimental
 description: A process is running from a world-writable temporary directory, a common malware staging location.
-author: SIEMBox EDR
+author: SIEMBox Endpoint
 level: high
 tags:
   - attack.execution

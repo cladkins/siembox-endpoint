@@ -1,6 +1,6 @@
 //go:build darwin
 
-// Command siembox-tray is the SIEMBox EDR macOS menu bar app: the control
+// Command siembox-tray is the SIEMBox Endpoint macOS menu bar app: the control
 // center for the agent. From the menu bar you can run on-demand scans/checks,
 // see status, configure the server, and start/stop the background service —
 // no CLI needed. Privileged actions (start/stop/configure) use the native
@@ -21,9 +21,9 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/cladkins/siembox-edr/internal/config"
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/config"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/util"
 )
 
 // agentBinary locates the siembox-agent CLI: next to this app first, then the
@@ -62,7 +62,7 @@ func onReady() {
 	util.EnsureSaneTmpdir()
 
 	systray.SetTitle("SIEMBox")
-	systray.SetTooltip("SIEMBox EDR agent")
+	systray.SetTooltip("SIEMBox Endpoint agent")
 
 	mStatus = systray.AddMenuItem("Service: checking…", "")
 	mStatus.Disable()
@@ -83,7 +83,7 @@ func onReady() {
 	systray.AddSeparator()
 	mRefresh := systray.AddMenuItem("Refresh Status", "Re-check the service status")
 	mConfig := systray.AddMenuItem("Reveal Config in Finder", "Open the agent config directory")
-	mUninstall := systray.AddMenuItem("Uninstall SIEMBox EDR…", "Remove the agent, service, and this app")
+	mUninstall := systray.AddMenuItem("Uninstall SIEMBox Endpoint…", "Remove the agent, service, and this app")
 	mQuit := systray.AddMenuItem("Quit", "Quit the menu bar app")
 
 	go refreshStatus()
@@ -255,10 +255,10 @@ func revealConfig() {
 
 const uninstallerPath = "/usr/local/bin/siembox-uninstall"
 
-// uninstallAll fully removes SIEMBox EDR after confirmation, using the
+// uninstallAll fully removes SIEMBox Endpoint after confirmation, using the
 // privileged uninstaller the pkg installed, then quits this app.
 func uninstallAll() {
-	if !confirm("Uninstall SIEMBox EDR?\n\nThis removes the agent, the background service, and this menu bar app. osquery and grype are left installed.") {
+	if !confirm("Uninstall SIEMBox Endpoint?\n\nThis removes the agent, the background service, and this menu bar app. osquery and grype are left installed.") {
 		return
 	}
 	if _, err := os.Stat(uninstallerPath); err != nil {
@@ -269,14 +269,14 @@ func uninstallAll() {
 		notify("Uninstall cancelled or failed")
 		return
 	}
-	notify("SIEMBox EDR uninstalled.")
+	notify("SIEMBox Endpoint uninstalled.")
 	time.Sleep(time.Second)
 	systray.Quit()
 }
 
 // confirm shows a two-button dialog; returns true only if the user confirms.
 func confirm(msg string) bool {
-	script := fmt.Sprintf(`display dialog %q with title "SIEMBox EDR" buttons {"Cancel","Uninstall"} default button "Cancel"`, msg)
+	script := fmt.Sprintf(`display dialog %q with title "SIEMBox Endpoint" buttons {"Cancel","Uninstall"} default button "Cancel"`, msg)
 	out, err := exec.Command("osascript", "-e", script).Output()
 	if err != nil {
 		return false // Cancel makes osascript exit non-zero
@@ -294,7 +294,7 @@ func runPrivileged(shellCmd string) error {
 // promptText shows a text-input dialog and returns the entered value. ok is
 // false if the user cancelled.
 func promptText(prompt, def string) (string, bool) {
-	script := fmt.Sprintf("display dialog %q default answer %q with title \"SIEMBox EDR\"", prompt, def)
+	script := fmt.Sprintf("display dialog %q default answer %q with title \"SIEMBox Endpoint\"", prompt, def)
 	out, err := exec.Command("osascript", "-e", script).Output()
 	if err != nil {
 		return "", false // user cancelled (osascript exits non-zero)
@@ -314,7 +314,7 @@ func shellQuote(s string) string {
 
 // notify shows a macOS notification via osascript.
 func notify(msg string) {
-	script := fmt.Sprintf(`display notification %q with title "SIEMBox EDR"`, msg)
+	script := fmt.Sprintf(`display notification %q with title "SIEMBox Endpoint"`, msg)
 	_ = exec.Command("osascript", "-e", script).Run()
 }
 

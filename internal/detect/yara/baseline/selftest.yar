@@ -1,9 +1,9 @@
 rule SIEMBox_YARA_SelfTest
 {
     meta:
-        author      = "SIEMBox EDR"
+        author      = "SIEMBox Endpoint"
         description = "Self-test rule: matches a benign marker string so operators can verify the YARA file-detection pipeline end-to-end without using a live malware sample."
-        reference   = "https://github.com/cladkins/siembox-edr"
+        reference   = "https://github.com/cladkins/siembox-endpoint"
         severity    = "high"
     strings:
         // A deliberately unique, harmless marker. Writing this string into a

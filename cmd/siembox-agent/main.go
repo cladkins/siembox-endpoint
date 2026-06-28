@@ -1,4 +1,4 @@
-// Command siembox-agent is the SIEMBox EDR endpoint agent. It enrolls with a
+// Command siembox-agent is the SIEMBox Endpoint agent. It enrolls with a
 // SIEMBox server, reports host inventory, scans for vulnerabilities, and
 // evaluates detection rules against host telemetry, shipping results over
 // HTTPS.
@@ -27,15 +27,15 @@ import (
 
 	"github.com/kardianos/service"
 
-	"github.com/cladkins/siembox-edr/internal/agent"
-	"github.com/cladkins/siembox-edr/internal/config"
-	"github.com/cladkins/siembox-edr/internal/detect"
-	"github.com/cladkins/siembox-edr/internal/detect/yara"
-	"github.com/cladkins/siembox-edr/internal/telemetry/osquery"
-	"github.com/cladkins/siembox-edr/internal/transport"
-	"github.com/cladkins/siembox-edr/internal/util"
-	"github.com/cladkins/siembox-edr/internal/version"
-	"github.com/cladkins/siembox-edr/internal/vuln"
+	"github.com/cladkins/siembox-endpoint/internal/agent"
+	"github.com/cladkins/siembox-endpoint/internal/config"
+	"github.com/cladkins/siembox-endpoint/internal/detect"
+	"github.com/cladkins/siembox-endpoint/internal/detect/yara"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
+	"github.com/cladkins/siembox-endpoint/internal/transport"
+	"github.com/cladkins/siembox-endpoint/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/version"
+	"github.com/cladkins/siembox-endpoint/internal/vuln"
 )
 
 func main() {
@@ -123,8 +123,8 @@ func (p *program) Stop(s service.Service) error {
 func newService(dir string, log *slog.Logger) (service.Service, error) {
 	cfg := &service.Config{
 		Name:        "siembox-agent",
-		DisplayName: "SIEMBox EDR Agent",
-		Description: "SIEMBox EDR endpoint agent: vulnerability scanning and threat detection.",
+		DisplayName: "SIEMBox Endpoint Agent",
+		Description: "SIEMBox Endpoint agent: vulnerability scanning and threat detection.",
 		Arguments:   []string{"-dir", dir, "run"},
 	}
 	return service.New(&program{dir: dir, log: log}, cfg)

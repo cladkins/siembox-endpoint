@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/models"
 )
 
 func newTestClient(t *testing.T, srv *httptest.Server) *Client {

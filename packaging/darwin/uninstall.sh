@@ -1,5 +1,5 @@
 #!/bin/sh
-# uninstall.sh - fully remove SIEMBox EDR from macOS.
+# uninstall.sh - fully remove SIEMBox Endpoint from macOS.
 # Installed by the .pkg to /usr/local/bin/siembox-uninstall and invoked by the
 # menu bar app's "Uninstall" item; also runnable directly: sudo siembox-uninstall
 #
@@ -14,7 +14,7 @@ CONF_DIR="$VENDOR_DIR/agent"
 DAEMON_PLIST=/Library/LaunchDaemons/siembox-agent.plist
 AGENT_PLIST=/Library/LaunchAgents/io.siembox.menubar.plist
 
-echo "Removing SIEMBox EDR…"
+echo "Removing SIEMBox Endpoint…"
 
 # 1. Stop + unregister the background (launchd daemon) service. Try the binary
 #    first for a clean kardianos teardown, then ALWAYS remove the daemon
@@ -35,7 +35,7 @@ rm -rf "$VENDOR_DIR"
 rm -f "$AGENT_PLIST"
 pkgutil --forget io.siembox.agent 2>/dev/null || true
 
-echo "SIEMBox EDR uninstalled. (osquery and grype were left installed.)"
+echo "SIEMBox Endpoint uninstalled. (osquery and grype were left installed.)"
 
 # 3. Detached + last: stop the running menu bar app and remove this uninstaller.
 #    Booting out the menu bar agent terminates the tray process — which may be

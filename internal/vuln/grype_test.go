@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/models"
 )
 
 const sampleGrypeJSON = `{

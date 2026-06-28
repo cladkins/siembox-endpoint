@@ -2,7 +2,7 @@ title: Potential Reverse Shell Command Line
 id: siembox-revshell-cmdline
 status: experimental
 description: A process command line contains patterns commonly used to establish a reverse shell.
-author: SIEMBox EDR
+author: SIEMBox Endpoint
 level: critical
 tags:
   - attack.execution

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/telemetry"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry"
 )
 
 // fakeSource emits a fixed set of records then blocks until ctx is cancelled.

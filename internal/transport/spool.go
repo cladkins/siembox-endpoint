@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/util"
 )
 
 // Spool is a simple on-disk FIFO queue of pending payloads. The agent writes a

@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/telemetry"
-	"github.com/cladkins/siembox-edr/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry"
+	"github.com/cladkins/siembox-endpoint/internal/util"
 )
 
 // Query is a single scheduled osquery query.

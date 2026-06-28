@@ -1,4 +1,4 @@
-module github.com/cladkins/siembox-edr
+module github.com/cladkins/siembox-endpoint
 
 go 1.24.7
 

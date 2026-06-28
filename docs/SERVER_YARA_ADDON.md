@@ -1,4 +1,4 @@
-# SIEMBox EDR — YARA rule delivery (add-on to the existing server)
+# SIEMBox Endpoint — YARA rule delivery (add-on to the existing server)
 
 The endpoint agent gained **YARA file-detection** with **server-delivered rule
 packs**. The server side that already implements `/api/edr/*` does **not** need
@@ -7,7 +7,7 @@ send `yara_rules_version`, the agent reads it as `0`, uses only its embedded
 baseline YARA rules, and never calls the new endpoint.
 
 When you're ready to serve curated YARA rules, add the following. The full
-contract lives in [`EDR_API.md`](EDR_API.md) and [`SERVER_HANDOFF.md`](SERVER_HANDOFF.md).
+contract lives in [`ENDPOINT_API.md`](ENDPOINT_API.md) and [`SERVER_HANDOFF.md`](SERVER_HANDOFF.md).
 
 ## 1. One new field in the `AgentConfig` response
 

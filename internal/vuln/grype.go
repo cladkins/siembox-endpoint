@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/util"
 )
 
 // grypeExtraDirs are non-PATH locations to look for the grype binary, which
@@ -92,7 +92,7 @@ func ensureGrypeCacheEnv() {
 	if err != nil || base == "" {
 		base = os.TempDir()
 	}
-	dir := filepath.Join(base, "siembox-edr", fmt.Sprintf("grype-%d", os.Geteuid()))
+	dir := filepath.Join(base, "siembox-endpoint", fmt.Sprintf("grype-%d", os.Geteuid()))
 	if err := os.MkdirAll(dir, 0o755); err == nil {
 		_ = os.Setenv("GRYPE_DB_CACHE_DIR", dir)
 	}

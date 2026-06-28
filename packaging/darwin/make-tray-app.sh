@@ -14,7 +14,7 @@ cd "$REPO_ROOT"
 APP="$DEST/SIEMBox Menu Bar.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-LDFLAGS="-s -w -X github.com/cladkins/siembox-edr/internal/version.Version=${VERSION}"
+LDFLAGS="-s -w -X github.com/cladkins/siembox-endpoint/internal/version.Version=${VERSION}"
 
 echo "building menu bar app (universal) -> $APP"
 GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o /tmp/tray-amd64 ./cmd/siembox-tray

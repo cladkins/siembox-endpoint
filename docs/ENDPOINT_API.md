@@ -1,7 +1,7 @@
-# SIEMBox EDR API Contract
+# SIEMBox Endpoint API Contract
 
 This document is the **shared source of truth** for the HTTP API spoken between
-the SIEMBox EDR agent (this repo) and the SIEMBox server (`cladkins/SIEMBOX`).
+the SIEMBox Endpoint agent (this repo) and the SIEMBox server (`cladkins/SIEMBOX`).
 The Go wire types live in [`internal/models/models.go`](../internal/models/models.go)
 and must stay in sync with the server implementation.
 

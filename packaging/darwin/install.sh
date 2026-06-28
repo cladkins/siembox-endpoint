@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh - SIEMBox EDR agent installer for macOS (launchd).
+# install.sh - SIEMBox Endpoint agent installer for macOS (launchd).
 #
 # NOTE: authored against macOS conventions but NOT yet validated on a real Mac.
 # Test on a recent macOS host before relying on it.

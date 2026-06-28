@@ -1,7 +1,7 @@
 #!/bin/sh
-# uninstall.sh - remove the SIEMBox EDR agent from Linux (non-package installs).
+# uninstall.sh - remove the SIEMBox Endpoint agent from Linux (non-package installs).
 #
-#   curl -sSfL https://raw.githubusercontent.com/cladkins/SIEMBOX-EDR/main/scripts/uninstall.sh | sudo sh
+#   curl -sSfL https://raw.githubusercontent.com/cladkins/siembox-endpoint/main/scripts/uninstall.sh | sudo sh
 #
 # For .deb/.rpm installs use the package manager instead (apt remove siembox-agent
 # / dnf remove siembox-agent), which runs the bundled pre-remove hook. This
@@ -27,4 +27,4 @@ else
 	echo "Left $CONF_DIR in place (pass --purge to remove config + identity)."
 fi
 
-echo "SIEMBox EDR agent removed. (osquery and grype were left installed.)"
+echo "SIEMBox Endpoint agent removed. (osquery and grype were left installed.)"

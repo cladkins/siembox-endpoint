@@ -1,4 +1,4 @@
-// Package agent implements the EDR agent lifecycle: enrollment, heartbeat,
+// Package agent implements the Endpoint agent lifecycle: enrollment, heartbeat,
 // config polling, inventory reporting, vulnerability scanning, detection event
 // delivery, and offline-resilient transport via the spool.
 package agent
@@ -12,16 +12,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/config"
-	"github.com/cladkins/siembox-edr/internal/detect"
-	"github.com/cladkins/siembox-edr/internal/detect/yara"
-	"github.com/cladkins/siembox-edr/internal/inventory"
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/telemetry"
-	"github.com/cladkins/siembox-edr/internal/telemetry/osquery"
-	"github.com/cladkins/siembox-edr/internal/transport"
-	"github.com/cladkins/siembox-edr/internal/version"
-	"github.com/cladkins/siembox-edr/internal/vuln"
+	"github.com/cladkins/siembox-endpoint/internal/config"
+	"github.com/cladkins/siembox-endpoint/internal/detect"
+	"github.com/cladkins/siembox-endpoint/internal/detect/yara"
+	"github.com/cladkins/siembox-endpoint/internal/inventory"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
+	"github.com/cladkins/siembox-endpoint/internal/transport"
+	"github.com/cladkins/siembox-endpoint/internal/version"
+	"github.com/cladkins/siembox-endpoint/internal/vuln"
 )
 
 // spool kinds and their target endpoints, used when replaying queued payloads.

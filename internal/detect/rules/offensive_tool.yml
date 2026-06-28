@@ -2,7 +2,7 @@ title: Offensive Security Tool Execution
 id: siembox-offensive-tool
 status: experimental
 description: A known offensive, recon, or credential-attack tool was observed running.
-author: SIEMBox EDR
+author: SIEMBox Endpoint
 level: medium
 tags:
   - attack.discovery

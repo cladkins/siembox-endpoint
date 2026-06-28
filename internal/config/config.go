@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/models"
 )
 
 // Settings is the operator-provided bootstrap configuration, typically written

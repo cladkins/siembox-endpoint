@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/version"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/version"
 )
 
 // Collect gathers host facts into a HostInventory. Software is populated

@@ -1,4 +1,4 @@
-# build-msi.ps1 - build a Windows .msi installer for the SIEMBox EDR agent.
+# build-msi.ps1 - build a Windows .msi installer for the SIEMBox Endpoint agent.
 #
 # Must run on Windows with the Go toolchain and .NET SDK. Installs the WiX CLI
 # if missing, builds the agent, and produces the MSI under dist\.
@@ -13,7 +13,7 @@ New-Item -ItemType Directory -Force -Path build, dist | Out-Null
 
 Write-Host "building siembox-agent.exe (windows/amd64)..."
 $env:GOOS = "windows"; $env:GOARCH = "amd64"; $env:CGO_ENABLED = "0"
-$ld = "-s -w -X github.com/cladkins/siembox-edr/internal/version.Version=$Version"
+$ld = "-s -w -X github.com/cladkins/siembox-endpoint/internal/version.Version=$Version"
 go build -ldflags $ld -o build\siembox-agent.exe .\cmd\siembox-agent
 
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {

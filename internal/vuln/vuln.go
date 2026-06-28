@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/models"
 )
 
 // Scanner produces a batch of vulnerability findings for the local host.

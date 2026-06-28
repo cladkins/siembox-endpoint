@@ -2,7 +2,7 @@ title: YARA Signature Match On File
 id: siembox-yara-file-match
 status: experimental
 description: A file in a monitored directory matched a YARA signature. The matched rule name(s) are in the "matches" field and the file in "path".
-author: SIEMBox EDR
+author: SIEMBox Endpoint
 level: high
 tags:
   - attack.execution

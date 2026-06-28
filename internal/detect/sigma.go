@@ -11,9 +11,9 @@ import (
 	sigma "github.com/bradleyjkemp/sigma-go"
 	"github.com/bradleyjkemp/sigma-go/evaluator"
 
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/telemetry"
-	"github.com/cladkins/siembox-edr/internal/util"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry"
+	"github.com/cladkins/siembox-endpoint/internal/util"
 )
 
 // compiledRule pairs a parsed Sigma rule with its evaluator.

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- WiX v4/v5 source for the SIEMBox EDR agent MSI.
+<!-- WiX v4/v5 source for the SIEMBox Endpoint agent MSI.
      Build: wix build siembox-agent.wxs -d Version=1.2.3 -d BinDir=build -o out.msi
      Installs the agent to Program Files\SIEMBox, seeds a config template under
      ProgramData\SIEMBox\agent, registers a Windows service (manual start until
      configured), and adds the install dir to the system PATH. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="SIEMBox EDR Agent"
+  <Package Name="SIEMBox Endpoint Agent"
            Manufacturer="cladkins"
            Version="$(var.Version)"
            UpgradeCode="7F3B2A1C-5D4E-4F6A-9B8C-1234567890AB"
@@ -24,13 +24,13 @@
       </Directory>
     </StandardDirectory>
 
-    <Feature Id="Main" Title="SIEMBox EDR Agent" Level="1">
+    <Feature Id="Main" Title="SIEMBox Endpoint Agent" Level="1">
       <Component Directory="INSTALLFOLDER" Bitness="always64">
         <File Id="AgentExe" Source="$(var.BinDir)\siembox-agent.exe" KeyPath="yes" />
         <ServiceInstall Id="SvcInstall"
                         Name="siembox-agent"
-                        DisplayName="SIEMBox EDR Agent"
-                        Description="SIEMBox EDR endpoint agent: vulnerability scanning and threat detection."
+                        DisplayName="SIEMBox Endpoint Agent"
+                        Description="SIEMBox Endpoint agent: vulnerability scanning and threat detection."
                         Type="ownProcess"
                         Start="demand"
                         ErrorControl="normal"

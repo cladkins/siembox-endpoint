@@ -7,8 +7,8 @@ package detect
 import (
 	"context"
 
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/telemetry"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/telemetry"
 )
 
 // Engine evaluates host telemetry against loaded rules and emits detections.

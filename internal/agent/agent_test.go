@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cladkins/siembox-edr/internal/config"
-	"github.com/cladkins/siembox-edr/internal/models"
-	"github.com/cladkins/siembox-edr/internal/transport"
+	"github.com/cladkins/siembox-endpoint/internal/config"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/transport"
 )
 
 func newTestAgent(t *testing.T, serverURL string, cfg models.AgentConfig) *Agent {

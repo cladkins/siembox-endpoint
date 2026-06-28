@@ -1,5 +1,5 @@
 // Package transport implements the HTTPS client the agent uses to talk to the
-// SIEMBox EDR API, plus an on-disk spool that lets events and vuln findings
+// SIEMBox Endpoint API, plus an on-disk spool that lets events and vuln findings
 // survive server outages and agent restarts.
 package transport
 
@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cladkins/siembox-edr/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/models"
 )
 
 // Client is a thin REST client for the /api/edr/* endpoints.
