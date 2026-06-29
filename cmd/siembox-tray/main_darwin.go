@@ -64,16 +64,16 @@ func onReady() {
 	systray.SetTitle("SIEMBox")
 	systray.SetTooltip("SIEMBox Endpoint agent")
 
-	mStatus = systray.AddMenuItem("Service: checking…", "")
+	mStatus = systray.AddMenuItem("Service: checking…", "When running, the agent monitors, scans, and detects continuously on its own and ships results to SIEMBox.")
 	mStatus.Disable()
-	mLastScan = systray.AddMenuItem("Last scan: never", "")
+	mLastScan = systray.AddMenuItem("Last manual scan: never", "Result of the last Run Vulnerability Scan you triggered from this menu (on-demand only).")
 	mLastScan.Disable()
-	mLastCheck = systray.AddMenuItem("Last check: never", "")
+	mLastCheck = systray.AddMenuItem("Last manual check: never", "Result of the last Run Detection Check you triggered from this menu. \"never\" just means you haven't run one by hand — the background service still detects continuously.")
 	mLastCheck.Disable()
 
 	systray.AddSeparator()
-	mScan = systray.AddMenuItem("Run Vulnerability Scan", "Scan installed software for known CVEs")
-	mCheck = systray.AddMenuItem("Run Detection Check", "Evaluate host telemetry against detection rules")
+	mScan = systray.AddMenuItem("Run Vulnerability Scan", "On-demand spot scan of installed software for known CVEs (the background service also scans on its own schedule).")
+	mCheck = systray.AddMenuItem("Run Detection Check", "On-demand spot check of host telemetry against detection rules (the background service detects continuously on its own).")
 
 	systray.AddSeparator()
 	mConfigure := systray.AddMenuItem("Configure Server…", "Set the SIEMBox server URL and enrollment token")
@@ -154,13 +154,13 @@ func runScan() {
 		reason := failureReason(err)
 		logFailure("scan", reason)
 		notify("Vulnerability scan failed: " + firstLine(reason))
-		mLastScan.SetTitle("Last scan: failed at " + nowStamp())
+		mLastScan.SetTitle("Last manual scan: failed at " + nowStamp())
 		return
 	}
 	var batch models.VulnBatch
 	_ = json.Unmarshal(out, &batch)
 	n := len(batch.Vulnerabilities)
-	mLastScan.SetTitle(fmt.Sprintf("Last scan: %d findings at %s", n, nowStamp()))
+	mLastScan.SetTitle(fmt.Sprintf("Last manual scan: %d findings at %s", n, nowStamp()))
 	notify(fmt.Sprintf("Vulnerability scan complete: %d findings", n))
 }
 
@@ -182,13 +182,13 @@ func runCheck() {
 		reason := failureReason(err)
 		logFailure("check", reason)
 		notify("Detection check failed: " + firstLine(reason))
-		mLastCheck.SetTitle("Last check: failed at " + nowStamp())
+		mLastCheck.SetTitle("Last manual check: failed at " + nowStamp())
 		return
 	}
 	var events []models.Event
 	_ = json.Unmarshal(out, &events)
 	n := len(events)
-	mLastCheck.SetTitle(fmt.Sprintf("Last check: %d detections at %s", n, nowStamp()))
+	mLastCheck.SetTitle(fmt.Sprintf("Last manual check: %d detections at %s", n, nowStamp()))
 	notify(fmt.Sprintf("Detection check complete: %d detections", n))
 }
 
