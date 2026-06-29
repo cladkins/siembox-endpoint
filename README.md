@@ -16,27 +16,27 @@ self-hosted environments.
 Targets: recent **macOS**, **Windows**, and **Ubuntu Server** (single static Go
 binary per platform, no runtime to install).
 
-## Status
+## What it does
 
-Phased build (see `docs/ENDPOINT_API.md` for the wire contract):
+Installed as a managed service (systemd/SysV on Linux, launchd on macOS, Service
+Control Manager on Windows), the agent:
 
-- [x] **Phase 1 — agent skeleton**: enrollment, heartbeat, config polling,
-  inventory reporting, offline-resilient spool transport, signal handling.
-- [x] **Phase 2 — vulnerability scanning**: Grype integration (runs the bundled
-  `grype` binary, parses JSON, maps to the SIEMBox vuln model, ships findings;
-  initial scan on startup + on schedule).
-- [x] **Phase 3 — detection**: osquery telemetry + `sigma-go` evaluation. The
-  agent drives `osqueryd` with a scheduled query pack, tails the results, and
-  evaluates each row against an embedded default Sigma rule pack plus any rules
-  the server pushes; matches ship as detections.
-- [x] **Phase 4 — packaging & service**: cross-platform service integration
-  (systemd/SysV/launchd/Windows SCM via `kardianos/service`), `install`/`start`/
-  `stop`/`status` subcommands, standalone `scan`/`check` test commands,
-  goreleaser + nfpm artifacts (`.deb`/`.rpm`/archives), and OS install scripts.
+- **Enrolls** with a SIEMBox server (enrollment token → per-agent API key), pulls
+  its config, and **reports host inventory** as an `endpoint` asset.
+- **Scans for vulnerabilities** with Grype on startup and on a schedule, shipping
+  CVE findings to SIEMBox's vulnerability dashboard.
+- **Detects suspicious activity** with osquery telemetry evaluated against
+  [Sigma](https://github.com/SigmaHQ/sigma) rules — an embedded default pack plus
+  rules the server pushes — shipping matches as alerts.
+- **Scans files with YARA** in common malware-drop / persistence directories,
+  using a baseline rule set embedded in the binary plus curated packs the server
+  delivers, refreshed without redeploying the agent.
+- Ships everything over HTTPS with an **on-disk spool**, so events survive server
+  outages and flush on reconnect (custom CA supported for self-signed homelab
+  certificates).
 
-The agent runs end-to-end: it enrolls, reports inventory, scans for
-vulnerabilities, and detects suspicious host activity — installable as a managed
-service on Linux, macOS, and Windows.
+The agent↔server wire contract is documented in
+[`docs/ENDPOINT_API.md`](docs/ENDPOINT_API.md).
 
 ### Vulnerability scanning
 
