@@ -59,6 +59,7 @@ type Agent struct {
 	yaraOsqueryi string
 	yaraSigPath  string
 	yaraPaths    []string
+	yaraExcludes []string // SQL LIKE patterns of paths to skip (the agent's own files)
 }
 
 // New constructs an Agent from loaded state. The transport client is created
@@ -102,6 +103,15 @@ func (a *Agent) WithYaraScan(osqueryiBin, sigPath string, paths []string) *Agent
 		paths = osquery.DefaultYaraPaths()
 	}
 	a.yaraPaths = paths
+	// Never scan the agent's own working files. grype's vulnerability database
+	// in particular contains exploit/webshell signatures that otherwise
+	// self-trigger the YARA rules (a high-severity false positive on
+	// .../grype-*/vulnerability.db). Excludes are SQL LIKE patterns.
+	a.yaraExcludes = []string{
+		"%/siembox-endpoint/%", // agent namespace: grype DB cache + temp
+		"%/siembox-edr/%",      // legacy namespace (pre-rebrand installs)
+		a.state.Dir + "/%",     // state dir: yara sigs, osquery db, spool
+	}
 	return a
 }
 
@@ -278,7 +288,7 @@ func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
 	seen := map[string]bool{}
 
 	scan := func() {
-		records, err := osquery.RunYaraScan(ctx, a.yaraOsqueryi, a.yaraPaths, a.yaraSigPath)
+		records, err := osquery.RunYaraScan(ctx, a.yaraOsqueryi, a.yaraPaths, a.yaraSigPath, a.yaraExcludes)
 		if err != nil {
 			a.log.Debug("yara scan failed", "err", err)
 			return

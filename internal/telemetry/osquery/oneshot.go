@@ -84,11 +84,11 @@ func runOnceWith(ctx context.Context, run oneShotRunner, binary string, queries 
 // matches by hand; running it from the agent avoids depending on osqueryd's
 // internal scheduler. Empty binary defaults to "osqueryi". Returns nil if paths
 // or sigPath are empty (YARA disabled).
-func RunYaraScan(ctx context.Context, binary string, paths []string, sigPath string) ([]telemetry.Record, error) {
-	return runYaraScanWith(ctx, defaultOneShotRunner, binary, paths, sigPath)
+func RunYaraScan(ctx context.Context, binary string, paths []string, sigPath string, excludes []string) ([]telemetry.Record, error) {
+	return runYaraScanWith(ctx, defaultOneShotRunner, binary, paths, sigPath, excludes)
 }
 
-func runYaraScanWith(ctx context.Context, run oneShotRunner, binary string, paths []string, sigPath string) ([]telemetry.Record, error) {
+func runYaraScanWith(ctx context.Context, run oneShotRunner, binary string, paths []string, sigPath string, excludes []string) ([]telemetry.Record, error) {
 	if len(paths) == 0 || sigPath == "" {
 		return nil, nil
 	}
@@ -97,7 +97,7 @@ func runYaraScanWith(ctx context.Context, run oneShotRunner, binary string, path
 	}
 	binary, _ = util.FindBinary(binary, osqueryExtraDirs)
 
-	out, err := run(ctx, binary, "--json", buildYaraScanQuery(paths, sigPath))
+	out, err := run(ctx, binary, "--json", buildYaraScanQuery(paths, sigPath, excludes))
 	if err != nil {
 		if stderr := util.StderrText(err); stderr != "" {
 			return nil, fmt.Errorf("osqueryi yara: %w: %s", err, stderr)

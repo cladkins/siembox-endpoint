@@ -86,7 +86,8 @@ func TestBuildConfig(t *testing.T) {
 func TestBuildYaraScanQuery(t *testing.T) {
 	sig := "/Library/Application Support/SIEMBox/agent/yara/siembox.yar"
 	paths := []string{"/tmp/%%", "/usr/local/bin/%%"}
-	q := buildYaraScanQuery(paths, sig)
+	excludes := []string{"%/siembox-endpoint/%", ""}
+	q := buildYaraScanQuery(paths, sig, excludes)
 
 	if !strings.Contains(q, "FROM yara ") {
 		t.Errorf("should use the on-demand yara table: %q", q)
@@ -99,6 +100,12 @@ func TestBuildYaraScanQuery(t *testing.T) {
 			t.Errorf("query missing path %q: %s", p, q)
 		}
 	}
+	if !strings.Contains(q, "path NOT LIKE '%/siembox-endpoint/%'") {
+		t.Errorf("query missing exclusion: %s", q)
+	}
+	if strings.Contains(q, "NOT LIKE ''") {
+		t.Errorf("empty exclusion should be skipped: %s", q)
+	}
 }
 
 func TestRunYaraScanParsesRows(t *testing.T) {
@@ -106,7 +113,7 @@ func TestRunYaraScanParsesRows(t *testing.T) {
 		return []byte(`[{"path":"/tmp/x","matches":"SIEMBox_YARA_SelfTest","count":"1"}]`), nil
 	}
 	recs, err := runYaraScanWith(context.Background(), fake, "osqueryi",
-		[]string{"/tmp/%%"}, "/sig/siembox.yar")
+		[]string{"/tmp/%%"}, "/sig/siembox.yar", nil)
 	if err != nil {
 		t.Fatalf("runYaraScanWith: %v", err)
 	}
@@ -129,10 +136,10 @@ func TestRunYaraScanDisabled(t *testing.T) {
 		return []byte("[]"), nil
 	}
 	// No paths or no sigfile => disabled, runner not invoked.
-	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", nil, "/sig.yar"); err != nil || recs != nil {
+	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", nil, "/sig.yar", nil); err != nil || recs != nil {
 		t.Errorf("expected nil,nil for no paths; got %v,%v", recs, err)
 	}
-	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", []string{"/tmp/%%"}, ""); err != nil || recs != nil {
+	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", []string{"/tmp/%%"}, "", nil); err != nil || recs != nil {
 		t.Errorf("expected nil,nil for no sigfile; got %v,%v", recs, err)
 	}
 	if called {

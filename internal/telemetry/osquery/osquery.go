@@ -216,13 +216,25 @@ const YaraScanIntervalSec = 60
 // FIM-style globs translate directly into LIKE clauses. The signature file is
 // referenced with sigfile (the form verified to match on the target host).
 // count>0 keeps only matches.
-func buildYaraScanQuery(paths []string, sigPath string) string {
+//
+// excludes are SQL LIKE patterns (where "%" matches any sequence) of paths to
+// skip — used to keep the agent from scanning its own working files (notably
+// grype's vulnerability database, which legitimately contains exploit/webshell
+// signatures and would otherwise self-trigger the YARA rules).
+func buildYaraScanQuery(paths []string, sigPath string, excludes []string) string {
 	likes := make([]string, 0, len(paths))
 	for _, p := range paths {
 		likes = append(likes, fmt.Sprintf("path LIKE '%s'", p))
 	}
-	return fmt.Sprintf("SELECT path, matches, count FROM yara WHERE (%s) AND sigfile='%s' AND count > 0;",
-		strings.Join(likes, " OR "), sigPath)
+	var b strings.Builder
+	fmt.Fprintf(&b, "SELECT path, matches, count FROM yara WHERE (%s)", strings.Join(likes, " OR "))
+	for _, e := range excludes {
+		if e != "" {
+			fmt.Fprintf(&b, " AND path NOT LIKE '%s'", e)
+		}
+	}
+	fmt.Fprintf(&b, " AND sigfile='%s' AND count > 0;", sigPath)
+	return b.String()
 }
 
 // buildConfig renders an osquery config JSON from the scheduled queries
