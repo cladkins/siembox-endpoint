@@ -32,12 +32,17 @@
                         DisplayName="SIEMBox Endpoint Agent"
                         Description="SIEMBox Endpoint agent: vulnerability scanning and threat detection."
                         Type="ownProcess"
-                        Start="demand"
+                        Start="auto"
                         ErrorControl="normal"
                         Account="LocalSystem"
                         Arguments=" -dir &quot;C:\ProgramData\SIEMBox\agent&quot; run" />
+        <!-- Stop="both" stops the old service on install/upgrade and uninstall;
+             Start="install" starts the (new) service after install/upgrade, so
+             an upgrade ends up running the new binary. Start="auto" above also
+             starts it at every boot. -->
         <ServiceControl Id="SvcControl"
                         Name="siembox-agent"
+                        Start="install"
                         Stop="both"
                         Remove="uninstall"
                         Wait="yes" />

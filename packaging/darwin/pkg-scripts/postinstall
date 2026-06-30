@@ -35,16 +35,21 @@ if ! command -v osqueryi >/dev/null 2>&1 \
 	rm -rf "$TMP"
 fi
 
-# Register the launchd service. Everything else (configure server, start/stop,
-# run scans) is driven from the menu bar app — no Terminal needed. Full Disk
-# Access is intentionally NOT requested: scans are scoped to world-readable
-# software locations and the detection checks don't need it.
+# Register the launchd service, then (re)start it so the just-installed binary is
+# the one running. This matters on UPGRADE: without the restart the previous
+# daemon keeps running the old version until reboot. `restart` loads + kickstarts
+# via modern launchctl and works whether or not the service was already running.
+# Configuration and scans are driven from the menu bar app — no Terminal needed.
+# Full Disk Access is intentionally NOT requested: scans are scoped to
+# world-readable software locations and the detection checks don't need it.
 "$BIN" -dir "$CONF_DIR" install || true
+"$BIN" -dir "$CONF_DIR" restart || true
 
-# Launch the menu bar app now for the logged-in user (it also auto-starts at
-# login via /Library/LaunchAgents/io.siembox.menubar.plist).
+# (Re)launch the menu bar app for the logged-in user. On upgrade a still-running
+# old app keeps the old code, so kill it first and let `open` start the new one.
 CONSOLE_UID=$(/usr/bin/stat -f%u /dev/console 2>/dev/null || echo "")
 if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
+	/usr/bin/pkill -f "SIEMBox Menu Bar.app" >/dev/null 2>&1 || true
 	# Launch with a clean env (-i ... TMPDIR unset): the installer's TMPDIR
 	# points at a PKInstallSandbox temp that macOS deletes after install, and a
 	# launched app would inherit it and break grype/osquery temp files.

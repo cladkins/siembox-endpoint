@@ -52,8 +52,11 @@ if ! command -v osqueryd >/dev/null 2>&1; then
 	fi
 fi
 
-# Register (and start) the service. kardianos picks systemd/sysv automatically.
+# Register the service, then restart it so the just-installed binary is the one
+# running. `restart` (not `start`) ensures an UPGRADE picks up the new version
+# even if the old daemon is still running; on a fresh install it just starts it.
+# kardianos picks systemd/sysv automatically.
 "$BIN" -dir "$CONF_DIR" install || echo "siembox-agent: service install reported an error (already installed?)."
-"$BIN" -dir "$CONF_DIR" start || echo "siembox-agent: not started (edit $CONF_FILE then run: siembox-agent -dir $CONF_DIR start)."
+"$BIN" -dir "$CONF_DIR" restart || echo "siembox-agent: not started (edit $CONF_FILE then run: siembox-agent -dir $CONF_DIR restart)."
 
 echo "siembox-agent: post-install complete."
