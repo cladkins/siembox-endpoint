@@ -55,12 +55,44 @@ type AgentConfig struct {
 	// changes. When it exceeds the agent's applied version, the agent downloads
 	// the bundle from GET /api/edr/agents/:id/yara and reloads detection.
 	YaraRulesVersion int `json:"yara_rules_version"`
+	// AgentUpdate is the server's pending request to update the agent binary, or
+	// nil when none is requested. See AgentUpdateRequest.
+	AgentUpdate *AgentUpdateRequest `json:"agent_update"`
+}
+
+// AgentUpdateRequest asks the agent to update itself to Version. The server only
+// names a version (plain X.Y.Z, no "v"); the agent derives the download location
+// itself and never accepts a URL from the server. RequestID is a server-generated
+// UUID, new for every request; the agent attempts a given RequestID at most once.
+type AgentUpdateRequest struct {
+	Version   string `json:"version"`
+	RequestID string `json:"request_id"`
+}
+
+// Agent self-update states reported in HeartbeatRequest.Update.
+const (
+	UpdateStateDownloading = "downloading"
+	UpdateStateInstalling  = "installing"
+	UpdateStateSucceeded   = "succeeded"
+	UpdateStateFailed      = "failed"
+)
+
+// UpdateReport is the status of the agent's most recent update attempt. It is
+// sent on every heartbeat until the server's config stops carrying RequestID.
+type UpdateReport struct {
+	RequestID string `json:"request_id"`
+	Version   string `json:"version"`
+	State     string `json:"state"`           // UpdateState*
+	Error     string `json:"error,omitempty"` // short, <= 500 chars, only for failed
 }
 
 // HeartbeatRequest is sent periodically to signal liveness.
 type HeartbeatRequest struct {
 	Status       string `json:"status"`
 	AgentVersion string `json:"agent_version"`
+	// Update is the status of the most recent self-update attempt, omitted when
+	// there is none to report.
+	Update *UpdateReport `json:"update,omitempty"`
 }
 
 // HeartbeatResponse tells the agent the current desired config version so it

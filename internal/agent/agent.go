@@ -21,6 +21,7 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/telemetry"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-endpoint/internal/transport"
+	"github.com/cladkins/siembox-endpoint/internal/update"
 	"github.com/cladkins/siembox-endpoint/internal/version"
 	"github.com/cladkins/siembox-endpoint/internal/vuln"
 )
@@ -51,6 +52,7 @@ type Agent struct {
 	scanner vuln.Scanner
 	engine  detect.Engine
 	log     *slog.Logger
+	updater *update.Updater
 
 	// restartDetection signals the detection supervisor to stop and restart the
 	// engine (re-reading the on-disk YARA signature file) after a rule update.
@@ -80,6 +82,7 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 		return nil, err
 	}
 	return &Agent{
+		updater:          update.New(update.Options{State: state, Log: log}),
 		state:            state,
 		client:           client,
 		spool:            spool,
@@ -128,6 +131,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}
 	a.log.Info("agent running", "agent_id", a.state.Identity.AgentID, "version", version.Version)
+
+	// Resolve a self-update left in flight by the previous process (succeeded if
+	// we now run the target version, failed otherwise) so the first heartbeat
+	// reports it, then act on any not-yet-attempted request in the cached config.
+	a.updater.Startup()
+	a.updater.Consider(ctx, a.state.Identity.Config.AgentUpdate)
 
 	// Pull any server-curated YARA rules before detection starts so the first
 	// osquery launch already uses them. Best-effort; baseline rules apply
@@ -179,6 +188,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	<-ctx.Done()
 	a.log.Info("shutting down")
 	wg.Wait()
+	a.updater.Wait()
 	return nil
 }
 
@@ -403,9 +413,11 @@ func (a *Agent) syncYaraRules(ctx context.Context) {
 }
 
 func (a *Agent) heartbeat(ctx context.Context) {
+	a.updater.CheckPending()
 	resp, err := a.client.Heartbeat(ctx, models.HeartbeatRequest{
 		Status:       "online",
 		AgentVersion: version.Version,
+		Update:       a.updater.Report(),
 	})
 	if err != nil {
 		a.log.Debug("heartbeat failed", "err", err)
@@ -415,6 +427,21 @@ func (a *Agent) heartbeat(ctx context.Context) {
 		a.log.Info("new config available", "version", resp.ConfigVersion)
 		a.pollConfig(ctx)
 	}
+	a.considerUpdate(ctx)
+}
+
+// considerUpdate prunes a finished update report the server no longer asks
+// about and starts any new update request from the current config. The attempt
+// runs in its own goroutine, so this never blocks the heartbeat.
+func (a *Agent) considerUpdate(ctx context.Context) {
+	var req *models.AgentUpdateRequest
+	a.state.View(func(id *config.Identity) { req = id.Config.AgentUpdate })
+	if req == nil {
+		a.updater.Prune("")
+	} else {
+		a.updater.Prune(req.RequestID)
+	}
+	a.updater.Consider(ctx, req)
 }
 
 func (a *Agent) pollConfig(ctx context.Context) {
@@ -426,8 +453,7 @@ func (a *Agent) pollConfig(ctx context.Context) {
 	if cfg.ConfigVersion == a.state.Identity.Config.ConfigVersion {
 		return
 	}
-	a.state.Identity.Config = cfg
-	if err := a.state.SaveIdentity(); err != nil {
+	if err := a.state.Mutate(func(id *config.Identity) { id.Config = cfg }); err != nil {
 		a.log.Warn("persist config", "err", err)
 	}
 	if err := a.engine.LoadRules(cfg.Rules); err != nil {

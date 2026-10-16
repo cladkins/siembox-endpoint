@@ -195,6 +195,49 @@ Service registration adapts to the host: systemd or SysV (Linux), launchd
 (macOS), Service Control Manager (Windows). To run in the foreground instead:
 `siembox-agent -dir /etc/siembox-agent run`.
 
+## Updating
+
+**From the SIEMBox console.** An admin can update an endpoint from the Endpoints
+page (per-endpoint **Update**, **Update all outdated**, or the auto-update
+switch). The server only names a target version; the agent downloads that
+release **directly from GitHub** (`github.com/cladkins/siembox-endpoint`), checks
+it against the release's `SHA256SUMS`, and updates the way it was installed:
+
+| Installed with | Update |
+|---|---|
+| `.deb` | `apt-get install -y` of the release `.deb` (falls back to `dpkg -i`) |
+| `.rpm` | `rpm -U` of the release `.rpm` |
+| `install.sh` / manual binary (Linux) | binary replaced in place, service restarted |
+| macOS `.pkg` | `installer -pkg` of the release `.pkg` |
+| macOS manual binary | binary replaced in place, service restarted |
+| Windows `.msi` | `msiexec /i` of the release `.msi`, silent |
+| Windows `install.ps1` / manual | `siembox-agent.exe` replaced in place, service restarted |
+
+The installer runs detached from the service (it restarts the agent), logging to
+`update.log` in the state directory (for MSI also `update-msi.log`). Downgrades
+and prerelease targets are refused, and a release without `SHA256SUMS` cannot be
+installed. **The endpoint needs outbound HTTPS access to `github.com` (and the
+`objects.githubusercontent.com` download redirect)**; `HTTPS_PROXY` is honored.
+The `ca_cert_path` / `insecure_skip_verify` settings apply to the SIEMBox server
+only, never to the GitHub download.
+
+**Manually.** Re-run the install method you used:
+
+```sh
+# Linux (script install)
+curl -sSfL https://raw.githubusercontent.com/cladkins/siembox-endpoint/main/scripts/install.sh | sudo sh
+sudo siembox-agent -dir /etc/siembox-agent restart
+
+# Debian/Ubuntu or RHEL-family: install the newer package from the release
+sudo apt-get install -y ./siembox-agent_<version>_amd64.deb
+sudo rpm -U siembox-agent-<version>-1.x86_64.rpm
+
+# macOS: install the newer .pkg from the release
+sudo installer -pkg siembox-agent-<version>-macos.pkg -target /
+```
+On Windows, run the newer `.msi` (or extract the release zip and re-run
+`packaging\windows\install.ps1` in an elevated PowerShell).
+
 ## Uninstall
 
 - **macOS:** use the menu bar app's **Uninstall SIEMBox Endpoint…** item (removes the

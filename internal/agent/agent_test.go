@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -102,5 +103,36 @@ func TestSyncYaraRulesSkipsWhenNotNewer(t *testing.T) {
 	}
 	if len(a.yaraRescan) != 0 {
 		t.Error("no YARA rescan should be queued when nothing changed")
+	}
+}
+
+func TestHeartbeatCarriesUpdateReportUntilConfigDropsIt(t *testing.T) {
+	const id = "b6f1c2d0-1111-4222-8333-444455556666"
+	var got []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, body)
+		io.WriteString(w, `{"config_version": 1}`)
+	}))
+	defer srv.Close()
+
+	a := newTestAgent(t, srv.URL, models.AgentConfig{ConfigVersion: 1,
+		AgentUpdate: &models.AgentUpdateRequest{Version: "1.4.0", RequestID: id}})
+	a.state.Identity.LastUpdateRequestID = id // already attempted: Consider must not start it
+	a.state.Identity.UpdateReport = &models.UpdateReport{RequestID: id, Version: "1.4.0", State: models.UpdateStateFailed, Error: "boom"}
+
+	a.heartbeat(context.Background())
+	u, _ := got[0]["update"].(map[string]any)
+	if u["request_id"] != id || u["state"] != "failed" || u["error"] != "boom" || got[0]["agent_version"] == nil {
+		t.Fatalf("heartbeat body: %v", got[0])
+	}
+
+	// Server cleared the request: the report is dropped and the field omitted.
+	a.state.Identity.Config.AgentUpdate = nil
+	a.heartbeat(context.Background()) // prunes after this one is sent
+	a.heartbeat(context.Background())
+	if _, present := got[len(got)-1]["update"]; present {
+		t.Fatalf("update must be omitted once config no longer carries it: %v", got[len(got)-1])
 	}
 }

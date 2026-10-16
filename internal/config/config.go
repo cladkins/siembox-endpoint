@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"time"
 
 	"github.com/cladkins/siembox-endpoint/internal/models"
 )
@@ -45,6 +47,23 @@ type Identity struct {
 	// disk. Persisted so the agent doesn't re-download an unchanged bundle on
 	// every restart.
 	AppliedYaraRulesVersion int `json:"applied_yara_rules_version,omitempty"`
+
+	// PendingUpdate is a self-update whose installer has been launched but whose
+	// outcome is not yet known. The restarted agent resolves it on startup.
+	PendingUpdate *PendingUpdate `json:"pending_update,omitempty"`
+	// UpdateReport is the status of the most recent update attempt, reported on
+	// heartbeats until the server's config stops carrying its request id.
+	UpdateReport *models.UpdateReport `json:"update_report,omitempty"`
+	// LastUpdateRequestID is the most recent update request id the agent acted
+	// on. A request id is attempted at most once.
+	LastUpdateRequestID string `json:"last_update_request_id,omitempty"`
+}
+
+// PendingUpdate records an in-flight self-update.
+type PendingUpdate struct {
+	RequestID string    `json:"request_id"`
+	Version   string    `json:"version"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 // State bundles the loaded settings and identity along with the directory they
@@ -53,6 +72,8 @@ type State struct {
 	Dir      string
 	Settings Settings
 	Identity Identity
+
+	mu sync.Mutex // serializes Mutate/View/SaveIdentity
 }
 
 const (
@@ -124,6 +145,28 @@ func (s *State) Enrolled() bool { return s.Identity.AgentID != "" && s.Identity.
 
 // SaveIdentity persists the identity with restrictive permissions.
 func (s *State) SaveIdentity() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveIdentityLocked()
+}
+
+// Mutate runs fn on the identity under the state lock and persists the result.
+// Use it (and View) for fields touched by more than one goroutine.
+func (s *State) Mutate(fn func(*Identity)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.Identity)
+	return s.saveIdentityLocked()
+}
+
+// View runs fn on the identity under the state lock without persisting.
+func (s *State) View(fn func(*Identity)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.Identity)
+}
+
+func (s *State) saveIdentityLocked() error {
 	raw, err := json.MarshalIndent(s.Identity, "", "  ")
 	if err != nil {
 		return err
