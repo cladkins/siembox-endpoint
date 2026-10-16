@@ -167,11 +167,17 @@ Settings file at the platform state directory (or pass `-dir`):
 
 ```json
 {
-  "server_url": "https://siembox.example.lan:8421",
+  "server_url": "http://siembox.example.lan:8421",
   "enrollment_token": "paste-token-from-siembox-ui",
   "ca_cert_path": "/etc/siembox-agent/ca.pem"
 }
 ```
+The SIEMBox API on port 8421 serves plain HTTP, so `server_url` starts with
+`http://`. An `https://` URL against that port fails the TLS handshake on every
+enrollment retry and the endpoint never appears in the console. Use `https://`
+(with `ca_cert_path` for a private CA) only when a TLS reverse proxy fronts the
+API.
+
 See [`examples/agent.json`](examples/agent.json). On first run the agent consumes
 the enrollment token, persists its identity to `identity.json` (mode 0600), and
 reuses it thereafter.

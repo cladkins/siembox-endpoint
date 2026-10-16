@@ -16,7 +16,8 @@ import (
 // Settings is the operator-provided bootstrap configuration, typically written
 // by the installer or an admin before first run.
 type Settings struct {
-	// ServerURL is the base URL of the SIEMBox API, e.g. https://siembox.local:8421
+	// ServerURL is the base URL of the SIEMBox API, e.g. http://siembox.local:8421.
+	// The API on 8421 serves plain HTTP; use https only behind a TLS proxy.
 	ServerURL string `json:"server_url"`
 	// EnrollmentToken is consumed once to enroll, then cleared.
 	EnrollmentToken string `json:"enrollment_token,omitempty"`

@@ -32,7 +32,7 @@ if (Test-Path $src) {
 if (-not (Test-Path $ConfFile)) {
 @'
 {
-  "server_url": "https://CHANGE-ME.siembox.lan:8421",
+  "server_url": "http://CHANGE-ME.siembox.lan:8421",
   "enrollment_token": "PASTE-ENROLLMENT-TOKEN-FROM-SIEMBOX-UI",
   "ca_cert_path": "",
   "insecure_skip_verify": false
