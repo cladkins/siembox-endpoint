@@ -152,7 +152,7 @@ attempt on every heartbeat until the config it receives no longer carries that
 `request_id`, then stops sending it. The server ignores an `update` whose
 `request_id` is not the agent's current request, and treats the request as
 succeeded when either the agent reports `succeeded` or the heartbeat's
-`agent_version` equals the target version.
+`agent_version` reaches or passes the target version.
 
 The in-flight attempt is persisted (`pending_update` in `identity.json`), so the
 restarted agent reports `succeeded` if it now runs the target version, or
