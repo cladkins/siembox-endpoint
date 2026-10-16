@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseDifferentialLine(t *testing.T) {
@@ -87,24 +88,46 @@ func TestBuildYaraScanQuery(t *testing.T) {
 	sig := "/Library/Application Support/SIEMBox/agent/yara/siembox.yar"
 	paths := []string{"/tmp/%%", "/usr/local/bin/%%"}
 	excludes := []string{"%/siembox-endpoint/%", ""}
-	q := buildYaraScanQuery(paths, sig, excludes)
+	q := buildYaraScanQuery(YaraScan{Paths: paths, SigPath: sig, Excludes: excludes, MaxFileSize: 50 << 20})
 
-	if !strings.Contains(q, "FROM yara ") {
-		t.Errorf("should use the on-demand yara table: %q", q)
+	// file must drive the join so its filters run before yara reads anything.
+	if !strings.Contains(q, "FROM file AS f CROSS JOIN yara AS y ON y.path = f.path") {
+		t.Errorf("should filter through the file table before the on-demand yara table: %q", q)
 	}
-	if !strings.Contains(q, "sigfile='"+sig+"'") || !strings.Contains(q, "count > 0") {
+	if !strings.Contains(q, "y.sigfile='"+sig+"'") || !strings.Contains(q, "y.count > 0") {
 		t.Errorf("query unexpected: %q", q)
 	}
 	for _, p := range paths {
-		if !strings.Contains(q, "path LIKE '"+p+"'") {
+		if !strings.Contains(q, "f.path LIKE '"+p+"'") {
 			t.Errorf("query missing path %q: %s", p, q)
 		}
 	}
-	if !strings.Contains(q, "path NOT LIKE '%/siembox-endpoint/%'") {
+	if !strings.Contains(q, "f.path NOT LIKE '%/siembox-endpoint/%'") {
 		t.Errorf("query missing exclusion: %s", q)
 	}
 	if strings.Contains(q, "NOT LIKE ''") {
 		t.Errorf("empty exclusion should be skipped: %s", q)
+	}
+	if !strings.Contains(q, "f.type = 'regular'") {
+		t.Errorf("query should skip non-regular files: %s", q)
+	}
+	if !strings.Contains(q, "f.size <= 52428800") {
+		t.Errorf("query missing size cap: %s", q)
+	}
+	// Zero ChangedSince is a full pass: no time filter.
+	if strings.Contains(q, "mtime") || strings.Contains(q, "ctime") {
+		t.Errorf("full pass should not filter on change time: %s", q)
+	}
+}
+
+func TestBuildYaraScanQueryIncremental(t *testing.T) {
+	since := time.Unix(1700000000, 999_000_000)
+	q := buildYaraScanQuery(YaraScan{Paths: []string{"/tmp/%%"}, SigPath: "/s.yar", ChangedSince: since})
+	if !strings.Contains(q, "(f.mtime >= 1700000000 OR f.ctime >= 1700000000)") {
+		t.Errorf("incremental pass should filter on mtime or ctime, truncated to the second: %s", q)
+	}
+	if strings.Contains(q, "f.size") {
+		t.Errorf("no size cap requested, none expected: %s", q)
 	}
 }
 
@@ -113,7 +136,7 @@ func TestRunYaraScanParsesRows(t *testing.T) {
 		return []byte(`[{"path":"/tmp/x","matches":"SIEMBox_YARA_SelfTest","count":"1"}]`), nil
 	}
 	recs, err := runYaraScanWith(context.Background(), fake, "osqueryi",
-		[]string{"/tmp/%%"}, "/sig/siembox.yar", nil)
+		YaraScan{Paths: []string{"/tmp/%%"}, SigPath: "/sig/siembox.yar"})
 	if err != nil {
 		t.Fatalf("runYaraScanWith: %v", err)
 	}
@@ -136,10 +159,10 @@ func TestRunYaraScanDisabled(t *testing.T) {
 		return []byte("[]"), nil
 	}
 	// No paths or no sigfile => disabled, runner not invoked.
-	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", nil, "/sig.yar", nil); err != nil || recs != nil {
+	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", YaraScan{SigPath: "/sig.yar"}); err != nil || recs != nil {
 		t.Errorf("expected nil,nil for no paths; got %v,%v", recs, err)
 	}
-	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", []string{"/tmp/%%"}, "", nil); err != nil || recs != nil {
+	if recs, err := runYaraScanWith(context.Background(), fake, "osqueryi", YaraScan{Paths: []string{"/tmp/%%"}}); err != nil || recs != nil {
 		t.Errorf("expected nil,nil for no sigfile; got %v,%v", recs, err)
 	}
 	if called {

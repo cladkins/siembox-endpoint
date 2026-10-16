@@ -77,6 +77,10 @@ func TestSyncYaraRulesAppliesUpdate(t *testing.T) {
 	if len(a.restartDetection) != 1 {
 		t.Error("expected a detection restart to be queued")
 	}
+	// New rules must reach files the incremental scan already passed over.
+	if len(a.yaraRescan) != 1 {
+		t.Error("expected a full YARA rescan to be queued")
+	}
 }
 
 func TestSyncYaraRulesSkipsWhenNotNewer(t *testing.T) {
@@ -95,5 +99,8 @@ func TestSyncYaraRulesSkipsWhenNotNewer(t *testing.T) {
 	}
 	if len(a.restartDetection) != 0 {
 		t.Error("no restart should be queued when nothing changed")
+	}
+	if len(a.yaraRescan) != 0 {
+		t.Error("no YARA rescan should be queued when nothing changed")
 	}
 }

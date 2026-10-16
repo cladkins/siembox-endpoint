@@ -84,7 +84,23 @@ osqueryd scheduled query or the evented `yara_events`/FSEvents file-monitor: the
 FSEvents monitor silently delivers nothing on macOS without Full Disk Access, and
 the daemon's scheduled query was unreliable, whereas an on-demand `osqueryi` scan
 runs immediately, on a cadence the agent controls and logs, and works the same on
-every OS with no special permissions. A small baseline rule set is embedded in
+every OS with no special permissions.
+
+The scan is kept cheap so it never competes with the host's workload:
+
+- Only the startup pass reads every file. Each later pass reads only files whose
+  mtime or ctime changed since the previous pass started (ctime catches files
+  dropped with a preserved old mtime). A YARA rule update from the server forces
+  one full pass again.
+- Files over 50 MB are skipped (disk images, container exports, and build
+  caches in `/tmp` would otherwise cost minutes of CPU per pass).
+- `osqueryi` runs at the lowest priority the OS offers: nice 19 plus the idle
+  I/O class on Linux, nice 19 plus the background band on macOS, and the idle
+  priority class on Windows.
+- A pass is killed after 10 minutes. A timed-out pass logs a warning and the
+  next pass moves on to newer changes rather than retrying it.
+
+A small baseline rule set is embedded in
 the binary (so a fresh, offline agent detects on day one); the SIEMBox server
 delivers the full curated rule packs. A match becomes a `high` detection event
 via the `siembox-yara-file-match` Sigma rule (deduped by path per agent run).
