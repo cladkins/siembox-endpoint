@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/telemetry"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-endpoint/internal/transport"
+	"github.com/cladkins/siembox-endpoint/internal/update"
 	"github.com/cladkins/siembox-endpoint/internal/version"
 	"github.com/cladkins/siembox-endpoint/internal/vuln"
 )
@@ -50,10 +52,14 @@ type Agent struct {
 	scanner vuln.Scanner
 	engine  detect.Engine
 	log     *slog.Logger
+	updater *update.Updater
 
 	// restartDetection signals the detection supervisor to stop and restart the
 	// engine (re-reading the on-disk YARA signature file) after a rule update.
 	restartDetection chan struct{}
+	// yaraRescan signals the YARA scan loop to run its next pass over every
+	// file, so files scanned under the old rules are checked against new ones.
+	yaraRescan chan struct{}
 
 	// YARA scan config (agent-driven, via osqueryi). Empty sigPath disables it.
 	yaraOsqueryi string
@@ -76,6 +82,7 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 		return nil, err
 	}
 	return &Agent{
+		updater:          update.New(update.Options{State: state, Log: log}),
 		state:            state,
 		client:           client,
 		spool:            spool,
@@ -83,6 +90,7 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 		engine:           detect.NoopEngine{},
 		log:              log,
 		restartDetection: make(chan struct{}, 1),
+		yaraRescan:       make(chan struct{}, 1),
 	}, nil
 }
 
@@ -124,6 +132,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	a.log.Info("agent running", "agent_id", a.state.Identity.AgentID, "version", version.Version)
 
+	// Resolve a self-update left in flight by the previous process (succeeded if
+	// we now run the target version, failed otherwise) so the first heartbeat
+	// reports it, then act on any not-yet-attempted request in the cached config.
+	a.updater.Startup()
+	a.updater.Consider(ctx, a.state.Identity.Config.AgentUpdate)
+
 	// Pull any server-curated YARA rules before detection starts so the first
 	// osquery launch already uses them. Best-effort; baseline rules apply
 	// regardless. The detection supervisor (runDetection) calls LoadRules.
@@ -132,6 +146,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	// drop the restart the initial sync queued to avoid an immediate bounce.
 	select {
 	case <-a.restartDetection:
+	default:
+	}
+	// Likewise the first YARA pass is already a full scan with these rules.
+	select {
+	case <-a.yaraRescan:
 	default:
 	}
 
@@ -169,6 +188,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	<-ctx.Done()
 	a.log.Info("shutting down")
 	wg.Wait()
+	a.updater.Wait()
 	return nil
 }
 
@@ -281,18 +301,46 @@ func (a *Agent) runDetection(ctx context.Context, events chan<- models.Event) {
 // file. It uses osqueryi (RunYaraScan) rather than an osqueryd scheduled query
 // so detection runs right away and on a cadence the agent controls and logs.
 // Dedups by path so a persistent matching file is alerted once per agent run.
+//
+// The startup pass reads every file under the watched paths; each later pass
+// reads only files changed since the previous pass started, so a quiet host
+// costs close to nothing per tick. A YARA rule update (yaraRescan) forces the
+// next pass to read every file again.
 func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
 	if a.yaraSigPath == "" || len(a.yaraPaths) == 0 {
 		return
 	}
 	seen := map[string]bool{}
+	var since time.Time // zero: the next pass scans every file
 
 	scan := func() {
-		records, err := osquery.RunYaraScan(ctx, a.yaraOsqueryi, a.yaraPaths, a.yaraSigPath, a.yaraExcludes)
+		start := time.Now()
+		full := since.IsZero()
+		sctx, cancel := context.WithTimeout(ctx, osquery.YaraScanTimeout)
+		defer cancel()
+		records, err := osquery.RunYaraScan(sctx, a.yaraOsqueryi, osquery.YaraScan{
+			Paths:        a.yaraPaths,
+			SigPath:      a.yaraSigPath,
+			Excludes:     a.yaraExcludes,
+			MaxFileSize:  osquery.YaraMaxFileSize,
+			ChangedSince: since,
+		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if errors.Is(sctx.Err(), context.DeadlineExceeded) {
+				// Advance the cutoff anyway: retrying the same pass every tick
+				// would keep osqueryi pinned, the load this timeout exists to stop.
+				a.log.Warn("yara scan timed out; next pass covers only files changed after it started",
+					"timeout", osquery.YaraScanTimeout.String(), "full", full)
+				since = start
+				return
+			}
 			a.log.Debug("yara scan failed", "err", err)
 			return
 		}
+		since = start
 		fresh := make([]telemetry.Record, 0, len(records))
 		for _, r := range records {
 			p := r.Columns["path"]
@@ -302,7 +350,8 @@ func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
 			seen[p] = true
 			fresh = append(fresh, r)
 		}
-		a.log.Debug("yara scan complete", "matches", len(records), "new", len(fresh))
+		a.log.Debug("yara scan complete", "full", full, "matches", len(records), "new", len(fresh),
+			"took", time.Since(start).Round(time.Millisecond).String())
 		for _, ev := range a.engine.Evaluate(ctx, fresh) {
 			select {
 			case out <- ev:
@@ -312,13 +361,15 @@ func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
 		}
 	}
 
-	scan() // immediate scan at startup (catches files already present)
+	scan() // immediate full scan at startup (catches files already present)
 	ticker := time.NewTicker(time.Duration(osquery.YaraScanIntervalSec) * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-a.yaraRescan:
+			since = time.Time{}
 		case <-ticker.C:
 			scan()
 		}
@@ -355,12 +406,18 @@ func (a *Agent) syncYaraRules(ctx context.Context) {
 	case a.restartDetection <- struct{}{}:
 	default:
 	}
+	select {
+	case a.yaraRescan <- struct{}{}:
+	default:
+	}
 }
 
 func (a *Agent) heartbeat(ctx context.Context) {
+	a.updater.CheckPending()
 	resp, err := a.client.Heartbeat(ctx, models.HeartbeatRequest{
 		Status:       "online",
 		AgentVersion: version.Version,
+		Update:       a.updater.Report(),
 	})
 	if err != nil {
 		a.log.Debug("heartbeat failed", "err", err)
@@ -370,6 +427,21 @@ func (a *Agent) heartbeat(ctx context.Context) {
 		a.log.Info("new config available", "version", resp.ConfigVersion)
 		a.pollConfig(ctx)
 	}
+	a.considerUpdate(ctx)
+}
+
+// considerUpdate prunes a finished update report the server no longer asks
+// about and starts any new update request from the current config. The attempt
+// runs in its own goroutine, so this never blocks the heartbeat.
+func (a *Agent) considerUpdate(ctx context.Context) {
+	var req *models.AgentUpdateRequest
+	a.state.View(func(id *config.Identity) { req = id.Config.AgentUpdate })
+	if req == nil {
+		a.updater.Prune("")
+	} else {
+		a.updater.Prune(req.RequestID)
+	}
+	a.updater.Consider(ctx, req)
 }
 
 func (a *Agent) pollConfig(ctx context.Context) {
@@ -381,8 +453,7 @@ func (a *Agent) pollConfig(ctx context.Context) {
 	if cfg.ConfigVersion == a.state.Identity.Config.ConfigVersion {
 		return
 	}
-	a.state.Identity.Config = cfg
-	if err := a.state.SaveIdentity(); err != nil {
+	if err := a.state.Mutate(func(id *config.Identity) { id.Config = cfg }); err != nil {
 		a.log.Warn("persist config", "err", err)
 	}
 	if err := a.engine.LoadRules(cfg.Rules); err != nil {

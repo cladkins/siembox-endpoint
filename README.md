@@ -84,7 +84,23 @@ osqueryd scheduled query or the evented `yara_events`/FSEvents file-monitor: the
 FSEvents monitor silently delivers nothing on macOS without Full Disk Access, and
 the daemon's scheduled query was unreliable, whereas an on-demand `osqueryi` scan
 runs immediately, on a cadence the agent controls and logs, and works the same on
-every OS with no special permissions. A small baseline rule set is embedded in
+every OS with no special permissions.
+
+The scan is kept cheap so it never competes with the host's workload:
+
+- Only the startup pass reads every file. Each later pass reads only files whose
+  mtime or ctime changed since the previous pass started (ctime catches files
+  dropped with a preserved old mtime). A YARA rule update from the server forces
+  one full pass again.
+- Files over 50 MB are skipped (disk images, container exports, and build
+  caches in `/tmp` would otherwise cost minutes of CPU per pass).
+- `osqueryi` runs at the lowest priority the OS offers: nice 19 plus the idle
+  I/O class on Linux, nice 19 plus the background band on macOS, and the idle
+  priority class on Windows.
+- A pass is killed after 10 minutes. A timed-out pass logs a warning and the
+  next pass moves on to newer changes rather than retrying it.
+
+A small baseline rule set is embedded in
 the binary (so a fresh, offline agent detects on day one); the SIEMBox server
 delivers the full curated rule packs. A match becomes a `high` detection event
 via the `siembox-yara-file-match` Sigma rule (deduped by path per agent run).
@@ -151,11 +167,17 @@ Settings file at the platform state directory (or pass `-dir`):
 
 ```json
 {
-  "server_url": "https://siembox.example.lan:8421",
+  "server_url": "http://siembox.example.lan:8421",
   "enrollment_token": "paste-token-from-siembox-ui",
   "ca_cert_path": "/etc/siembox-agent/ca.pem"
 }
 ```
+The SIEMBox API on port 8421 serves plain HTTP, so `server_url` starts with
+`http://`. An `https://` URL against that port fails the TLS handshake on every
+enrollment retry and the endpoint never appears in the console. Use `https://`
+(with `ca_cert_path` for a private CA) only when a TLS reverse proxy fronts the
+API.
+
 See [`examples/agent.json`](examples/agent.json). On first run the agent consumes
 the enrollment token, persists its identity to `identity.json` (mode 0600), and
 reuses it thereafter.
@@ -172,6 +194,49 @@ sudo siembox-agent -dir /etc/siembox-agent uninstall
 Service registration adapts to the host: systemd or SysV (Linux), launchd
 (macOS), Service Control Manager (Windows). To run in the foreground instead:
 `siembox-agent -dir /etc/siembox-agent run`.
+
+## Updating
+
+**From the SIEMBox console.** An admin can update an endpoint from the Endpoints
+page (per-endpoint **Update**, **Update all outdated**, or the auto-update
+switch). The server only names a target version; the agent downloads that
+release **directly from GitHub** (`github.com/cladkins/siembox-endpoint`), checks
+it against the release's `SHA256SUMS`, and updates the way it was installed:
+
+| Installed with | Update |
+|---|---|
+| `.deb` | `apt-get install -y` of the release `.deb` (falls back to `dpkg -i`) |
+| `.rpm` | `rpm -U` of the release `.rpm` |
+| `install.sh` / manual binary (Linux) | binary replaced in place, service restarted |
+| macOS `.pkg` | `installer -pkg` of the release `.pkg` |
+| macOS manual binary | binary replaced in place, service restarted |
+| Windows `.msi` | `msiexec /i` of the release `.msi`, silent |
+| Windows `install.ps1` / manual | `siembox-agent.exe` replaced in place, service restarted |
+
+The installer runs detached from the service (it restarts the agent), logging to
+`update.log` in the state directory (for MSI also `update-msi.log`). Downgrades
+and prerelease targets are refused, and a release without `SHA256SUMS` cannot be
+installed. **The endpoint needs outbound HTTPS access to `github.com` (and the
+`objects.githubusercontent.com` download redirect)**; `HTTPS_PROXY` is honored.
+The `ca_cert_path` / `insecure_skip_verify` settings apply to the SIEMBox server
+only, never to the GitHub download.
+
+**Manually.** Re-run the install method you used:
+
+```sh
+# Linux (script install)
+curl -sSfL https://raw.githubusercontent.com/cladkins/siembox-endpoint/main/scripts/install.sh | sudo sh
+sudo siembox-agent -dir /etc/siembox-agent restart
+
+# Debian/Ubuntu or RHEL-family: install the newer package from the release
+sudo apt-get install -y ./siembox-agent_<version>_amd64.deb
+sudo rpm -U siembox-agent-<version>-1.x86_64.rpm
+
+# macOS: install the newer .pkg from the release
+sudo installer -pkg siembox-agent-<version>-macos.pkg -target /
+```
+On Windows, run the newer `.msi` (or extract the release zip and re-run
+`packaging\windows\install.ps1` in an elevated PowerShell).
 
 ## Uninstall
 

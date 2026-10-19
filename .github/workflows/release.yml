@@ -98,3 +98,35 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.msi
+
+  # Publishes SHA256SUMS for the release. Agents self-update straight from the
+  # GitHub release and refuse any release without this file, verifying every
+  # downloaded asset against it. Runs only after every asset has been attached.
+  checksums:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: write and upload SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          cd assets
+          gh release download "$TAG" --dir .
+          rm -f SHA256SUMS   # re-runs: never checksum a previous SHA256SUMS
+          # The agent only accepts plain file names; fail the release loudly otherwise.
+          if ls -1 | grep -qvE '^[A-Za-z0-9][A-Za-z0-9._+~-]*$'; then
+            echo "asset with an unsupported file name:" >&2
+            ls -1 | grep -vE '^[A-Za-z0-9][A-Za-z0-9._+~-]*$' >&2
+            exit 1
+          fi
+          LC_ALL=C ls -1 | xargs -d '\n' sha256sum > ../SHA256SUMS
+          cd ..
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber

@@ -207,33 +207,68 @@ func normalizeQueryName(n string) string {
 // YARA scan. An agent-driven scan (RunYaraScan) is used instead of an osqueryd
 // scheduled query so detection runs immediately at startup and on a predictable
 // cadence the agent controls and logs, rather than waiting on osquery's internal
-// scheduler.
+// scheduler. Only the first pass reads every file; later passes read just the
+// files changed since the previous pass started (see YaraScan.ChangedSince).
 const YaraScanIntervalSec = 60
 
-// buildYaraScanQuery builds the on-demand yara-table query that scans the given
-// paths against sigPath. osquery's yara table interprets "%" as a single path
-// level and "%%" as recursive (the same globbing as file_paths), so the
-// FIM-style globs translate directly into LIKE clauses. The signature file is
-// referenced with sigfile (the form verified to match on the target host).
-// count>0 keeps only matches.
-//
-// excludes are SQL LIKE patterns (where "%" matches any sequence) of paths to
-// skip — used to keep the agent from scanning its own working files (notably
-// grype's vulnerability database, which legitimately contains exploit/webshell
-// signatures and would otherwise self-trigger the YARA rules).
-func buildYaraScanQuery(paths []string, sigPath string, excludes []string) string {
-	likes := make([]string, 0, len(paths))
-	for _, p := range paths {
-		likes = append(likes, fmt.Sprintf("path LIKE '%s'", p))
+// YaraMaxFileSize is the largest file (bytes) the YARA scan reads. Drop-site
+// payloads are small; multi-GB files in /tmp (disk images, container exports,
+// build caches) cost minutes of CPU per pass and are skipped.
+const YaraMaxFileSize int64 = 50 << 20
+
+// YaraScanTimeout bounds one osqueryi YARA pass. osqueryi is killed when it
+// expires, so a pathological pass cannot pin a core indefinitely.
+const YaraScanTimeout = 10 * time.Minute
+
+// YaraScan describes one on-demand YARA pass.
+type YaraScan struct {
+	// Paths are FIM-style globs: osquery reads "%" as one path level and "%%"
+	// as recursive (the same globbing as file_paths).
+	Paths []string
+	// SigPath is the compiled-on-load signature file. Empty disables the scan.
+	SigPath string
+	// Excludes are SQL LIKE patterns (where "%" matches any sequence) of paths
+	// to skip: the agent's own working files, notably grype's vulnerability
+	// database, which legitimately contains exploit/webshell signatures and
+	// would otherwise self-trigger the YARA rules.
+	Excludes []string
+	// MaxFileSize skips files larger than this many bytes. <= 0 means no cap.
+	MaxFileSize int64
+	// ChangedSince limits the pass to files whose mtime or ctime is at or after
+	// this instant. ctime is included because it cannot be set from userland,
+	// so a file dropped with a preserved old mtime (tar, cp -p, curl -R) is
+	// still picked up. Zero scans every file.
+	ChangedSince time.Time
+}
+
+// buildYaraScanQuery builds the on-demand yara-table query for s. The file
+// table expands the globs and filters on type, size, and change time before any
+// file is read; the CROSS JOIN forces SQLite to evaluate file first and hand
+// each surviving path to yara as its required path constraint. The signature
+// file is referenced with sigfile (the form verified to match on the target
+// host). count>0 keeps only matches.
+func buildYaraScanQuery(s YaraScan) string {
+	likes := make([]string, 0, len(s.Paths))
+	for _, p := range s.Paths {
+		likes = append(likes, fmt.Sprintf("f.path LIKE '%s'", p))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "SELECT path, matches, count FROM yara WHERE (%s)", strings.Join(likes, " OR "))
-	for _, e := range excludes {
+	fmt.Fprintf(&b, "SELECT y.path, y.matches, y.count FROM file AS f CROSS JOIN yara AS y ON y.path = f.path WHERE (%s)",
+		strings.Join(likes, " OR "))
+	for _, e := range s.Excludes {
 		if e != "" {
-			fmt.Fprintf(&b, " AND path NOT LIKE '%s'", e)
+			fmt.Fprintf(&b, " AND f.path NOT LIKE '%s'", e)
 		}
 	}
-	fmt.Fprintf(&b, " AND sigfile='%s' AND count > 0;", sigPath)
+	b.WriteString(" AND f.type = 'regular'")
+	if s.MaxFileSize > 0 {
+		fmt.Fprintf(&b, " AND f.size <= %d", s.MaxFileSize)
+	}
+	if !s.ChangedSince.IsZero() {
+		t := s.ChangedSince.Unix()
+		fmt.Fprintf(&b, " AND (f.mtime >= %d OR f.ctime >= %d)", t, t)
+	}
+	fmt.Fprintf(&b, " AND y.sigfile='%s' AND y.count > 0;", s.SigPath)
 	return b.String()
 }
 

@@ -49,8 +49,20 @@ Response `200`:
 Liveness ping. Server updates `last_seen` and returns the desired config
 version so the agent knows whether to re-pull config.
 
-Request: `{ "status": "online", "agent_version": "string" }`
+Request:
+```json
+{
+  "status": "online",
+  "agent_version": "1.3.2",
+  "update": { "request_id": "b6f1c2d0-...", "version": "1.4.0", "state": "installing", "error": "" }
+}
+```
 Response `200`: `{ "config_version": 3 }`
+
+`update` is optional and present only while the agent has a self-update status to
+report (see [Agent self-update](#agent-self-update)). `state` is one of
+`downloading`, `installing`, `succeeded`, `failed`; `error` is a short
+human-readable string (<= 500 chars), only for `failed`.
 
 ### `GET /api/edr/agents/:id/config`
 Return the current `AgentConfig`.
@@ -65,9 +77,13 @@ Return the current `AgentConfig`.
   "enabled_modules": ["inventory", "vuln", "detect"],
   "rule_set_version": 12,
   "rules": ["<sigma rule yaml>", "..."],
-  "yara_rules_version": 7
+  "yara_rules_version": 7,
+  "agent_update": { "version": "1.4.0", "request_id": "b6f1c2d0-..." }
 }
 ```
+
+`agent_update` is `null` when no update is requested (see
+[Agent self-update](#agent-self-update)).
 
 `yara_rules_version` increments whenever the server's curated YARA signature
 bundle changes. When it exceeds the agent's applied version, the agent fetches
@@ -85,6 +101,66 @@ an empty body is valid. Auth: agent key (Bearer + `X-Agent-ID`).
 The agent calls this only when `yara_rules_version` increases, writes the bundle
 to `<state-dir>/yara/siembox.yar`, and restarts its osquery YARA scanning to
 apply it. Response: `200 OK` with the rule text.
+
+### Agent self-update
+
+An admin (or the server's auto-update setting) can ask an agent to update itself.
+The server only **names a version**; it never supplies a URL. When it sets or
+clears an agent's update request it increments that agent's `config_version`, so
+the next heartbeat makes the agent re-pull config.
+
+`AgentConfig.agent_update` is `{ "version": "X.Y.Z", "request_id": "<uuid>" }` or
+`null`.
+
+- `version` is plain `X.Y.Z` (digits only, no leading `v`, no prerelease). The
+  agent validates it against `^\d+\.\d+\.\d+$` and refuses anything else.
+- `request_id` is a server-generated UUID, new for every request. The agent
+  validates it (`[0-9a-fA-F-]{1,64}`) and attempts a given `request_id` **at most
+  once**, even across restarts; retrying a failed update means issuing a new
+  `request_id`.
+- Downgrades are refused on both sides: the target must be greater than the
+  agent's version (numeric X, Y, Z compare). An agent whose own version is not
+  plain `X.Y.Z` (e.g. `dev`, `a8922f4-dirty`) is a *dev build*: it accepts a
+  manual update to any valid target, and the server's auto-update skips it.
+
+The agent downloads from the hardcoded repo `cladkins/siembox-endpoint`:
+`https://github.com/cladkins/siembox-endpoint/releases/download/v<VERSION>/`
+(HTTPS only, system CA store only, `HTTPS_PROXY` honored; the SIEMBox
+`ca_cert_path` / `insecure_skip_verify` settings do not apply). It fetches
+`SHA256SUMS` first, picks the asset for its install method from the names listed
+there, and verifies the download's SHA-256 (max 300 MB). A release without
+`SHA256SUMS`, or without a matching asset, fails the update.
+
+| Install method (detected) | Asset | Applied with |
+|---|---|---|
+| Linux, owned by dpkg | `siembox-agent_<V>_<amd64\|arm64>.deb` | `apt-get install -y <path>` (fallback `dpkg -i`) |
+| Linux, owned by rpm | `siembox-agent-<V>-<rel>.<x86_64\|aarch64>.rpm` | `rpm -U <path>` |
+| Linux, otherwise (`install.sh`) | `siembox-endpoint_<V>_linux_<arch>.tar.gz` | binary swap + service restart |
+| macOS, owned by a pkg receipt | `siembox-agent-<V>-macos.pkg` | `installer -pkg <path> -target /` |
+| macOS, otherwise | `siembox-endpoint_<V>_darwin_<arch>.tar.gz` | binary swap + service restart |
+| Windows, MSI install | `siembox-agent-<V>-windows-amd64.msi` | `msiexec /i <path> /qn /norestart /l*v <state-dir>\update-msi.log` |
+| Windows, otherwise | `siembox-endpoint_<V>_windows_amd64.zip` | binary swap + service restart |
+
+The installer restarts the agent's own service, so it is launched detached
+(`systemd-run` transient unit on systemd Linux, a new session elsewhere on
+Linux/macOS, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` on Windows) with its
+output in `<state-dir>/update.log`. For binary swaps the agent first checks that
+the new binary runs and reports the target version.
+
+**Heartbeat `update` status.** The agent reports the status of its most recent
+attempt on every heartbeat until the config it receives no longer carries that
+`request_id`, then stops sending it. The server ignores an `update` whose
+`request_id` is not the agent's current request, and treats the request as
+succeeded when either the agent reports `succeeded` or the heartbeat's
+`agent_version` reaches or passes the target version.
+
+The in-flight attempt is persisted (`pending_update` in `identity.json`), so the
+restarted agent reports `succeeded` if it now runs the target version, or
+`failed` if it is still on the old one. If the old agent is still running 15
+minutes after launching the installer it reports `failed` with the tail of
+`update.log`.
+
+Self-update is agent self-maintenance, not a response action on the host.
 
 ### `POST /api/edr/inventory`
 Upsert the endpoint as an **asset** of type `endpoint`. The server maps

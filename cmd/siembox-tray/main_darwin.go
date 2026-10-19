@@ -218,7 +218,7 @@ func controlService(action, progressMsg string) {
 // configureServer prompts for the server URL + enrollment token and writes
 // agent.json (root-owned, 0600) via an administrator-privileged copy.
 func configureServer() {
-	url, ok := promptText("Enter your SIEMBox server URL (e.g. https://siembox.local:8421):", "https://")
+	url, ok := promptText("Enter your SIEMBox server URL (e.g. http://siembox.local:8421):", "http://")
 	if !ok || strings.TrimSpace(url) == "" {
 		return
 	}
