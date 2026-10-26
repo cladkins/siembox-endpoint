@@ -1,0 +1,19 @@
+C:Q1abc=
+P:musl
+V:1.2.5-r0
+A:x86_64
+S:407181
+T:the musl c library (libc) implementation
+o:musl
+F:lib
+R:ld-musl-x86_64.so.1
+
+C:Q1def=
+P:busybox
+V:1.36.1-r29
+A:x86_64
+T:Size optimized toolbox of many common UNIX utilities
+
+P:openssh-server
+V:9.7_p1-r4
+A:x86_64

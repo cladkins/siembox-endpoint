@@ -241,6 +241,42 @@ table, linked to the endpoint asset.
 ```
 Response: `202 Accepted`.
 
+### `POST /api/edr/packages`
+Full snapshot of the host's installed software (every package, not only
+vulnerable ones). It **replaces** the agent's previous snapshot on the server:
+a package missing from it is removed. SIEMBox's Application Monitoring matches
+it against the signatures' `package` matcher (evidence source `endpoint_sbom`).
+The body is sent gzip-compressed (`Content-Encoding: gzip`).
+
+```json
+{
+  "agent_id": "string",
+  "snapshot_hash": "sha256:<hex>",
+  "collected_at": "RFC3339",
+  "force": false,
+  "packages": [{ "name": "openssh-server", "version": "1:9.6p1-3ubuntu13.5", "type": "deb" }]
+}
+```
+
+- `snapshot_hash`: sha256 over the sorted `type\x00name\x00version` lines,
+  joined by `\n`, prefixed `sha256:` (the server computes the same when it is
+  missing). When it equals the server's stored hash nothing is written.
+- No `packages` (hash only): a check. The agent sends it on runs where the list
+  did not change.
+- `type`: `deb`, `rpm`, `apk`, `app`, `brew`, `brew-cask`, `pkg`, `msi`, `win`.
+- Server limits: name 256, version 128 characters; 50,000 packages.
+
+Response `200`:
+
+```json
+{ "accepted": true, "unchanged": false, "snapshot_required": false, "package_count": 707, "stored": 707, "removed": 0, "skipped": 0, "truncated": 0 }
+```
+
+`unchanged: true`: the server already had it. `snapshot_required: true`
+(`accepted: false`): a hash-only check the server does not have — send the
+list. `404`: a server that predates the route; the agent backs off for a day.
+Not spooled: the next run supersedes a failed send.
+
 ## Server-side mapping summary
 
 | Agent input        | SIEMBox table        | Notes                                    |
@@ -249,6 +285,7 @@ Response: `202 Accepted`.
 | inventory          | `assets` (reuse)     | `asset_type='endpoint'`, agent↔asset map |
 | events (detection) | `alerts` (reuse)     | normalized into existing alert pipeline  |
 | vulnerabilities    | `vulnerabilities`    | reuse, linked to endpoint asset          |
+| packages           | `edr_agent_packages` | full snapshot per agent (migration 049)  |
 | yara (download)    | `edr_yara_bundle`    | curated YARA rule text + version         |
 
 New server tables: `edr_agents`, `edr_enrollment_tokens`, `edr_yara_bundle`.

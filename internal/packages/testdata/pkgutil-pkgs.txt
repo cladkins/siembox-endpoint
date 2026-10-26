@@ -1,0 +1,4 @@
+com.apple.pkg.CLTools_Executables
+com.apple.pkg.MobileAssets
+org.wireshark.Wireshark
+com.tailscale.ipn.macsys

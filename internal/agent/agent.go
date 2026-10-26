@@ -18,6 +18,7 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/detect/yara"
 	"github.com/cladkins/siembox-endpoint/internal/inventory"
 	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/packages"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-endpoint/internal/transport"
@@ -42,6 +43,13 @@ const (
 	eventBatchMax        = 100
 	eventBatchWait       = 10 * time.Second
 	spoolFlushSec        = 30
+
+	// packageResendEvery: the full package list goes out at least this often
+	// even when unchanged (the server writes nothing if it already has it).
+	packageResendEvery = 24 * time.Hour
+	// packageUnsupportedBackoff: how long to wait after a server without
+	// POST /api/edr/packages (404) before trying again.
+	packageUnsupportedBackoff = 24 * time.Hour
 )
 
 // Agent ties together transport, collectors, and the detection engine.
@@ -66,6 +74,12 @@ type Agent struct {
 	yaraSigPath  string
 	yaraPaths    []string
 	yaraExcludes []string // SQL LIKE patterns of paths to skip (the agent's own files)
+
+	// Package inventory: the collector (packages.Collect; tests swap it), the
+	// clock, and the back-off after a server that lacks the route.
+	collectPackages     func(context.Context) packages.Result
+	now                 func() time.Time
+	packagesUnsupported time.Time // zero, or when to try a 404ing server again
 }
 
 // New constructs an Agent from loaded state. The transport client is created
@@ -91,6 +105,8 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 		log:              log,
 		restartDetection: make(chan struct{}, 1),
 		yaraRescan:       make(chan struct{}, 1),
+		collectPackages:  packages.Collect,
+		now:              time.Now,
 	}, nil
 }
 
@@ -180,6 +196,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	run(func() { a.tick(ctx, sec(cfg.ConfigPollIntervalSec, defaultConfigPollSec), a.pollConfig) })
 	run(func() { a.tick(ctx, sec(cfg.InventoryIntervalSec, defaultInventorySec), a.reportInventory) })
 	run(func() { a.tick(ctx, sec(cfg.VulnScanIntervalSec, defaultVulnScanSec), a.runVulnScan) })
+	if a.state.Settings.PackageInventoryEnabled() {
+		interval := int(a.state.Settings.PackageInventoryInterval() / time.Second)
+		run(func() { a.reportPackages(ctx); a.tick(ctx, interval, a.reportPackages) })
+	} else {
+		a.log.Info("package inventory disabled (package_inventory=false)")
+	}
 	run(func() { a.tick(ctx, spoolFlushSec, a.flushSpool) })
 	run(func() { a.batchEvents(ctx, events) })
 	run(func() { a.runDetection(ctx, events) })
@@ -473,6 +495,76 @@ func (a *Agent) reportInventory(ctx context.Context) {
 	if err := a.client.SendInventory(ctx, req); err != nil {
 		a.log.Debug("inventory send failed, spooling", "err", err)
 		a.spoolJSON("inventory", req)
+	}
+}
+
+// reportPackages reads the host's package databases and sends the list to the
+// server when it changed since the last accepted snapshot (or a day has
+// passed); otherwise it sends only the hash, which the server answers without
+// touching its rows and which tells it the agent still reports. Not spooled:
+// the next run supersedes a failed send. A server that answers 404 predates the
+// route: logged once, then retried after packageUnsupportedBackoff.
+func (a *Agent) reportPackages(ctx context.Context) {
+	now := a.now()
+	if now.Before(a.packagesUnsupported) {
+		return
+	}
+	started := time.Now()
+	res := a.collectPackages(ctx)
+	for name, err := range res.Errors {
+		a.log.Warn("package inventory source failed", "source", name, "err", err)
+	}
+	if len(res.Packages) == 0 {
+		// Nothing to report (no known package database, or every source
+		// failed). Never send an empty list: it would clear the server's.
+		a.log.Debug("package inventory found no packages", "sources", res.Sources)
+		return
+	}
+	hash := packages.Hash(res.Packages)
+	var lastHash string
+	var lastSent time.Time
+	a.state.View(func(id *config.Identity) { lastHash, lastSent = id.PackagesHash, id.PackagesSentAt })
+
+	report := models.PackageReport{AgentID: a.state.Identity.AgentID, SnapshotHash: hash, CollectedAt: now.UTC()}
+	full := hash != lastHash || now.Sub(lastSent) >= packageResendEvery
+	if full {
+		report.Packages = res.Packages
+	}
+	resp, err := a.client.SendPackages(ctx, report)
+	if err == nil && !full && resp.SnapshotRequired {
+		// The server does not have our snapshot (a restored database, say).
+		report.Packages = res.Packages
+		full = true
+		resp, err = a.client.SendPackages(ctx, report)
+	}
+	var se *transport.StatusError
+	if errors.As(err, &se) && se.Status == 404 {
+		a.packagesUnsupported = now.Add(packageUnsupportedBackoff)
+		a.log.Info("server does not accept package inventory yet (404 on /api/edr/packages; update SIEMBox); will retry",
+			"retry_in", packageUnsupportedBackoff.String())
+		return
+	}
+	if err != nil {
+		a.log.Debug("package inventory send failed; next run retries", "err", err)
+		return
+	}
+	if !resp.Accepted {
+		a.log.Debug("package inventory not accepted", "response", resp)
+		return
+	}
+	if err := a.state.Mutate(func(id *config.Identity) {
+		id.PackagesHash = hash
+		if full {
+			id.PackagesSentAt = now
+		}
+	}); err != nil {
+		a.log.Warn("persist package inventory state", "err", err)
+	}
+	if full && !resp.Unchanged {
+		a.log.Info("package inventory sent", "packages", len(res.Packages), "removed", resp.Removed,
+			"sources", res.Sources, "took", time.Since(started).Round(time.Millisecond).String())
+	} else {
+		a.log.Debug("package inventory unchanged", "packages", len(res.Packages))
 	}
 }
 

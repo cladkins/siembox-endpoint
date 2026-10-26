@@ -27,6 +27,9 @@ Control Manager on Windows), the agent:
   its config, and **reports host inventory** as an `endpoint` asset.
 - **Scans for vulnerabilities** with Grype on startup and on a schedule, shipping
   CVE findings to SIEMBox's vulnerability dashboard.
+- **Reports installed software** (every package, not only vulnerable ones) at
+  startup and every 6 hours, sending the list only when it changed, for
+  SIEMBox's Application Monitoring.
 - **Detects suspicious activity** with osquery telemetry evaluated against
   [Sigma](https://github.com/SigmaHQ/sigma) rules — an embedded default pack plus
   rules the server pushes — shipping matches as alerts.
@@ -54,6 +57,26 @@ disk — this avoids walking TCC-protected user folders (no permission prompts)
 and is much faster. Setting `vuln_scan_target` overrides this with a single
 target. The binary is located via `PATH` plus common dirs (`/usr/local/bin`,
 `/opt/homebrew/bin`), so it works under `sudo`/launchd.
+
+### Installed software (package inventory)
+
+The agent reads the platform's package databases directly (no external tool,
+a fraction of a second) and sends the full list to `POST /api/edr/packages`:
+
+| Platform | Sources (`type`) |
+|----------|------------------|
+| Linux    | dpkg `/var/lib/dpkg/status` (`deb`), Alpine `/lib/apk/db/installed` (`apk`), `rpm -qa` when rpm is installed (`rpm`) |
+| macOS    | `/Applications` app bundles with their `Info.plist` version (`app`), Homebrew Cellar/Caskroom under `/opt/homebrew` and `/usr/local` (`brew`, `brew-cask`), non-Apple installer receipts from `pkgutil` (`pkg`) |
+| Windows  | the Uninstall registry keys — machine-wide 64/32-bit and every loaded user hive (`msi` for Windows Installer products, else `win`); hidden system components and updates are skipped |
+
+It runs at startup and every `package_inventory_interval_seconds` (default
+21600, 6 h; minimum 300). The full list goes out only when its hash changed
+since the last accepted snapshot, or once a day; otherwise only the hash is
+sent, which the server answers without rewriting anything (and asks for the
+list if it does not have it). An empty result is never sent. A SIEMBox server
+that predates the route answers 404: the agent logs it and tries again a day
+later. Turn it off with `"package_inventory": false`. Read-only, like
+everything the agent does.
 
 ### Detection
 
@@ -178,6 +201,10 @@ enrollment retry and the endpoint never appears in the console. Use `https://`
 (with `ca_cert_path` for a private CA) only when a TLS reverse proxy fronts the
 API.
 
+Optional keys: `grype_binary`, `vuln_scan_target`, `osquery_binary` (see above),
+`package_inventory` (`false` turns the installed-software report off; default
+on) and `package_inventory_interval_seconds` (default 21600).
+
 See [`examples/agent.json`](examples/agent.json). On first run the agent consumes
 the enrollment token, persists its identity to `identity.json` (mode 0600), and
 reuses it thereafter.
@@ -279,6 +306,7 @@ real scanners locally and print JSON to stdout:
 ```sh
 sudo siembox-agent scan     # one-shot grype vulnerability scan -> findings JSON
 sudo siembox-agent check    # one-shot osquery snapshot + Sigma eval -> detections JSON
+sudo siembox-agent packages # one-shot installed-package inventory -> packages JSON
 ```
 
 ## Build & test (from source)

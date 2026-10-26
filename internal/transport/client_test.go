@@ -1,8 +1,10 @@
 package transport
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -153,5 +155,50 @@ func TestPostRaw(t *testing.T) {
 	}
 	if gotBody != `{"x":1}` {
 		t.Errorf("body = %q", gotBody)
+	}
+}
+
+func TestSendPackagesGzipAndStatusError(t *testing.T) {
+	var got models.PackageReport
+	var encoding string
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/edr/packages" || r.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("unexpected request %s %v", r.URL.Path, r.Header)
+		}
+		encoding = r.Header.Get("Content-Encoding")
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			io.WriteString(w, `{"error":"Not found"}`)
+			return
+		}
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			t.Fatalf("gzip: %v", err)
+		}
+		json.NewDecoder(zr).Decode(&got)
+		io.WriteString(w, `{"accepted":true,"unchanged":false,"package_count":1,"stored":1,"removed":4}`)
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	resp, err := c.SendPackages(context.Background(), models.PackageReport{
+		AgentID: "agent-1", SnapshotHash: "sha256:x", Packages: []models.Package{{Name: "bash", Version: "5.2", Type: "deb"}},
+	})
+	if err != nil {
+		t.Fatalf("SendPackages: %v", err)
+	}
+	if encoding != "gzip" || got.SnapshotHash != "sha256:x" || len(got.Packages) != 1 || !resp.Accepted || resp.Removed != 4 {
+		t.Errorf("encoding=%q got=%+v resp=%+v", encoding, got, resp)
+	}
+
+	status = http.StatusNotFound
+	_, err = c.SendPackages(context.Background(), models.PackageReport{SnapshotHash: "sha256:x"})
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusNotFound {
+		t.Fatalf("err = %v, want a 404 StatusError", err)
+	}
+	if want := `POST /api/edr/packages: status 404: {"error":"Not found"}`; err.Error() != want {
+		t.Errorf("message %q, want %q", err.Error(), want)
 	}
 }

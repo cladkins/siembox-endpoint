@@ -11,6 +11,7 @@
 //	status              report service status
 //	scan                one-shot vulnerability scan, print JSON (no server)
 //	check               one-shot detection check, print JSON (no server)
+//	packages            one-shot installed-package inventory, print JSON (no server)
 //	version             print the agent version
 package main
 
@@ -31,6 +32,8 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/config"
 	"github.com/cladkins/siembox-endpoint/internal/detect"
 	"github.com/cladkins/siembox-endpoint/internal/detect/yara"
+	"github.com/cladkins/siembox-endpoint/internal/models"
+	"github.com/cladkins/siembox-endpoint/internal/packages"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
 	"github.com/cladkins/siembox-endpoint/internal/transport"
 	"github.com/cladkins/siembox-endpoint/internal/util"
@@ -71,11 +74,13 @@ func dispatch(cmd, dir string, log *slog.Logger) error {
 		return runScan(dir, log)
 	case "check":
 		return runCheck(dir, log)
+	case "packages":
+		return runPackages(log)
 	case "run", "install", "uninstall", "start", "stop", "restart", "status":
 		return runService(cmd, dir, log)
 	default:
 		fmt.Fprintf(os.Stderr, "usage: siembox-agent [-dir DIR] [-v] "+
-			"(run|install|uninstall|start|stop|restart|status|scan|check|version)\n")
+			"(run|install|uninstall|start|stop|restart|status|scan|check|packages|version)\n")
 		os.Exit(2)
 		return nil
 	}
@@ -301,6 +306,21 @@ func runCheck(dir string, log *slog.Logger) error {
 	events := engine.Evaluate(ctx, records)
 	log.Info("check complete", "records", len(records), "detections", len(events))
 	return printJSON(events)
+}
+
+// runPackages prints the installed-package inventory the agent would report.
+func runPackages(log *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	res := packages.Collect(ctx)
+	for name, err := range res.Errors {
+		log.Warn("package source failed", "source", name, "err", err)
+	}
+	log.Info("package inventory complete", "packages", len(res.Packages), "sources", res.Sources)
+	return printJSON(struct {
+		SnapshotHash string           `json:"snapshot_hash"`
+		Packages     []models.Package `json:"packages"`
+	}{packages.Hash(res.Packages), res.Packages})
 }
 
 // osqueryiBinary derives the osqueryi path from a configured binary. If an

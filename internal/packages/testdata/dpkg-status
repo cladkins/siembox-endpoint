@@ -1,0 +1,47 @@
+Package: adduser
+Status: install ok installed
+Priority: important
+Section: admin
+Installed-Size: 608
+Maintainer: Ubuntu Core Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: all
+Multi-Arch: foreign
+Version: 3.137ubuntu1
+Depends: passwd (>= 1:4.13+dfsg1-3)
+Conffiles:
+ /etc/deluser.conf 773fb95e98a27947de4a95abb3d3f2a2
+Description: add and remove users and groups
+ This package includes the 'adduser' and 'deluser' commands for creating
+ and removing users.
+ .
+ Status: not a field, a continuation line
+
+Package: libc6
+Status: install ok installed
+Architecture: amd64
+Multi-Arch: same
+Version: 2.39-0ubuntu8.3
+Description: GNU C Library: Shared libraries
+
+Package: libc6
+Status: install ok installed
+Architecture: i386
+Multi-Arch: same
+Version: 2.39-0ubuntu8.3
+Description: GNU C Library: Shared libraries (i386)
+
+Package: openssh-server
+Status: install ok installed
+Architecture: amd64
+Version: 1:9.6p1-3ubuntu13.5
+Description: secure shell (SSH) server
+
+Package: apache2
+Status: deinstall ok config-files
+Architecture: amd64
+Version: 2.4.58-1ubuntu8
+Description: removed, only its config files are left
+
+Package: half
+Status: install reinstreq half-installed
+Version: 1.0
