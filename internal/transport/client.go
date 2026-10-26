@@ -146,6 +146,14 @@ func (c *Client) SendVulnerabilities(ctx context.Context, req models.VulnBatch) 
 	return c.do(ctx, http.MethodPost, "/api/edr/vulnerabilities", true, req, nil)
 }
 
+// ReportScan reports a scan's start or end for the scan history. A server
+// that predates the route answers 404 (see StatusError).
+func (c *Client) ReportScan(ctx context.Context, report models.ScanReport) (models.ScanReportResponse, error) {
+	var resp models.ScanReportResponse
+	err := c.do(ctx, http.MethodPost, "/api/edr/scans", true, report, &resp)
+	return resp, err
+}
+
 // SendPackages delivers the host's installed-package snapshot (or, with no
 // packages, asks whether the server has report.SnapshotHash). The body is
 // gzip-compressed: a host's list is ~1 MB of JSON that compresses ~10x.

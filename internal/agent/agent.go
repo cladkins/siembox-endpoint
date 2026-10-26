@@ -80,6 +80,20 @@ type Agent struct {
 	collectPackages     func(context.Context) packages.Result
 	now                 func() time.Time
 	packagesUnsupported time.Time // zero, or when to try a 404ing server again
+
+	// Scans: per-type run state and history reporting (scans.go).
+	scans *scanCoordinator
+	// events is the detection channel YARA passes emit into (set by Run).
+	events chan<- models.Event
+	// YARA pass state, used only by the yara scan (runScan keeps it serial):
+	// files already alerted, the cutoff for the next incremental pass, and
+	// whether a rule update asked for the next pass to be full.
+	yaraMu        sync.Mutex
+	yaraSeen      map[string]bool
+	yaraSince     time.Time
+	yaraForceFull bool
+	// runYara runs one osqueryi YARA pass (osquery.RunYaraScan; tests swap it).
+	runYara func(context.Context, string, osquery.YaraScan) ([]telemetry.Record, error)
 }
 
 // New constructs an Agent from loaded state. The transport client is created
@@ -107,6 +121,9 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 		yaraRescan:       make(chan struct{}, 1),
 		collectPackages:  packages.Collect,
 		now:              time.Now,
+		scans:            newScanCoordinator(),
+		yaraSeen:         map[string]bool{},
+		runYara:          osquery.RunYaraScan,
 	}, nil
 }
 
@@ -177,10 +194,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 
 	// Send an inventory snapshot immediately on startup.
-	a.reportInventory(ctx)
+	a.runScan(ctx, models.ScanTypeInventory, models.ScanTriggerStartup, nil)
 
 	var wg sync.WaitGroup
 	events := make(chan models.Event, 256)
+	a.events = events
 
 	run := func(fn func()) {
 		wg.Add(1)
@@ -189,27 +207,36 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Run an initial vulnerability scan shortly after startup so a newly
 	// enrolled endpoint surfaces vuln data without waiting for the first tick.
-	run(func() { a.runVulnScan(ctx) })
+	run(func() { a.runScan(ctx, models.ScanTypeVuln, models.ScanTriggerStartup, nil) })
 
 	cfg := a.state.Identity.Config
+	scheduled := func(t string) func(context.Context) {
+		return func(ctx context.Context) { a.runScan(ctx, t, models.ScanTriggerSchedule, nil) }
+	}
 	run(func() { a.tick(ctx, sec(cfg.HeartbeatIntervalSec, defaultHeartbeatSec), a.heartbeat) })
 	run(func() { a.tick(ctx, sec(cfg.ConfigPollIntervalSec, defaultConfigPollSec), a.pollConfig) })
-	run(func() { a.tick(ctx, sec(cfg.InventoryIntervalSec, defaultInventorySec), a.reportInventory) })
-	run(func() { a.tick(ctx, sec(cfg.VulnScanIntervalSec, defaultVulnScanSec), a.runVulnScan) })
+	run(func() {
+		a.tick(ctx, sec(cfg.InventoryIntervalSec, defaultInventorySec), scheduled(models.ScanTypeInventory))
+	})
+	run(func() { a.tick(ctx, sec(cfg.VulnScanIntervalSec, defaultVulnScanSec), scheduled(models.ScanTypeVuln)) })
 	if a.state.Settings.PackageInventoryEnabled() {
 		interval := int(a.state.Settings.PackageInventoryInterval() / time.Second)
-		run(func() { a.reportPackages(ctx); a.tick(ctx, interval, a.reportPackages) })
+		run(func() {
+			a.runScan(ctx, models.ScanTypePackages, models.ScanTriggerStartup, nil)
+			a.tick(ctx, interval, scheduled(models.ScanTypePackages))
+		})
 	} else {
 		a.log.Info("package inventory disabled (package_inventory=false)")
 	}
 	run(func() { a.tick(ctx, spoolFlushSec, a.flushSpool) })
 	run(func() { a.batchEvents(ctx, events) })
 	run(func() { a.runDetection(ctx, events) })
-	run(func() { a.runYaraScans(ctx, events) })
+	run(func() { a.runYaraScans(ctx) })
 
 	<-ctx.Done()
 	a.log.Info("shutting down")
 	wg.Wait()
+	a.scans.wg.Wait()
 	a.updater.Wait()
 	return nil
 }
@@ -319,71 +346,16 @@ func (a *Agent) runDetection(ctx context.Context, events chan<- models.Event) {
 }
 
 // runYaraScans runs the agent-driven YARA scan immediately on startup and then
-// every YaraScanIntervalSec, emitting a detection for each newly-seen matching
-// file. It uses osqueryi (RunYaraScan) rather than an osqueryd scheduled query
-// so detection runs right away and on a cadence the agent controls and logs.
-// Dedups by path so a persistent matching file is alerted once per agent run.
-//
-// The startup pass reads every file under the watched paths; each later pass
-// reads only files changed since the previous pass started, so a quiet host
-// costs close to nothing per tick. A YARA rule update (yaraRescan) forces the
-// next pass to read every file again.
-func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
-	if a.yaraSigPath == "" || len(a.yaraPaths) == 0 {
+// every YaraScanIntervalSec (see yaraScan). It uses osqueryi (RunYaraScan)
+// rather than an osqueryd scheduled query so detection runs right away and on
+// a cadence the agent controls and logs. A YARA rule update (yaraRescan)
+// makes the next pass full. On-demand passes come through runScan too, so they
+// never overlap a scheduled one.
+func (a *Agent) runYaraScans(ctx context.Context) {
+	if !a.scanAvailable(models.ScanTypeYara) {
 		return
 	}
-	seen := map[string]bool{}
-	var since time.Time // zero: the next pass scans every file
-
-	scan := func() {
-		start := time.Now()
-		full := since.IsZero()
-		sctx, cancel := context.WithTimeout(ctx, osquery.YaraScanTimeout)
-		defer cancel()
-		records, err := osquery.RunYaraScan(sctx, a.yaraOsqueryi, osquery.YaraScan{
-			Paths:        a.yaraPaths,
-			SigPath:      a.yaraSigPath,
-			Excludes:     a.yaraExcludes,
-			MaxFileSize:  osquery.YaraMaxFileSize,
-			ChangedSince: since,
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if errors.Is(sctx.Err(), context.DeadlineExceeded) {
-				// Advance the cutoff anyway: retrying the same pass every tick
-				// would keep osqueryi pinned, the load this timeout exists to stop.
-				a.log.Warn("yara scan timed out; next pass covers only files changed after it started",
-					"timeout", osquery.YaraScanTimeout.String(), "full", full)
-				since = start
-				return
-			}
-			a.log.Debug("yara scan failed", "err", err)
-			return
-		}
-		since = start
-		fresh := make([]telemetry.Record, 0, len(records))
-		for _, r := range records {
-			p := r.Columns["path"]
-			if p == "" || seen[p] {
-				continue
-			}
-			seen[p] = true
-			fresh = append(fresh, r)
-		}
-		a.log.Debug("yara scan complete", "full", full, "matches", len(records), "new", len(fresh),
-			"took", time.Since(start).Round(time.Millisecond).String())
-		for _, ev := range a.engine.Evaluate(ctx, fresh) {
-			select {
-			case out <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}
-
-	scan() // immediate full scan at startup (catches files already present)
+	a.runScan(ctx, models.ScanTypeYara, models.ScanTriggerStartup, nil) // full scan of files already present
 	ticker := time.NewTicker(time.Duration(osquery.YaraScanIntervalSec) * time.Second)
 	defer ticker.Stop()
 	for {
@@ -391,11 +363,100 @@ func (a *Agent) runYaraScans(ctx context.Context, out chan<- models.Event) {
 		case <-ctx.Done():
 			return
 		case <-a.yaraRescan:
-			since = time.Time{}
+			a.yaraMu.Lock()
+			a.yaraForceFull = true
+			a.yaraMu.Unlock()
 		case <-ticker.C:
-			scan()
+			a.runScan(ctx, models.ScanTypeYara, models.ScanTriggerSchedule, nil)
 		}
 	}
+}
+
+// yaraNextFull: whether a YARA pass with this trigger reads every file. The
+// first pass, startup and on-demand passes and the pass after a rule update do;
+// other scheduled passes read only files changed since the previous one.
+func (a *Agent) yaraNextFull(trigger string) bool {
+	a.yaraMu.Lock()
+	defer a.yaraMu.Unlock()
+	return trigger != models.ScanTriggerSchedule || a.yaraSince.IsZero() || a.yaraForceFull
+}
+
+// yaraScan runs one YARA pass and emits a detection for each newly seen
+// matching file (deduped by path, so a persistent matching file is alerted
+// once per agent run). It keeps the CPU limits of RunYaraScan (low priority,
+// YaraScanTimeout, size cap); a quiet host costs close to nothing per
+// incremental pass. An incremental pass is recorded in the history only when
+// it found a new match.
+func (a *Agent) yaraScan(ctx context.Context, run *scanRun) (scanResult, error) {
+	if !a.scanAvailable(models.ScanTypeYara) {
+		return scanResult{}, unavailable("YARA file scanning is disabled on this host (it needs osquery: install it and restart the agent)")
+	}
+	start := time.Now()
+	var since time.Time
+	if !run.Full {
+		a.yaraMu.Lock()
+		since = a.yaraSince
+		a.yaraMu.Unlock()
+	}
+	sctx, cancel := context.WithTimeout(ctx, osquery.YaraScanTimeout)
+	defer cancel()
+	records, err := a.runYara(sctx, a.yaraOsqueryi, osquery.YaraScan{
+		Paths:        a.yaraPaths,
+		SigPath:      a.yaraSigPath,
+		Excludes:     a.yaraExcludes,
+		MaxFileSize:  osquery.YaraMaxFileSize,
+		ChangedSince: since,
+	})
+	summary := map[string]any{"full": run.Full}
+	if err != nil {
+		if ctx.Err() != nil {
+			return scanResult{}, ctx.Err()
+		}
+		if errors.Is(sctx.Err(), context.DeadlineExceeded) {
+			// Advance the cutoff anyway: retrying the same pass every tick
+			// would keep osqueryi pinned, the load this timeout exists to stop.
+			a.log.Warn("yara scan timed out; next pass covers only files changed after it started",
+				"timeout", osquery.YaraScanTimeout.String(), "full", run.Full)
+			a.yaraMu.Lock()
+			a.yaraSince = start
+			if run.Full {
+				a.yaraForceFull = false
+			}
+			a.yaraMu.Unlock()
+			return scanResult{Summary: summary, Record: run.Full}, fmt.Errorf("yara scan timed out after %s", osquery.YaraScanTimeout)
+		}
+		a.log.Debug("yara scan failed", "err", err)
+		return scanResult{Summary: summary, Record: run.Full}, fmt.Errorf("yara scan: %w", err)
+	}
+	a.yaraMu.Lock()
+	a.yaraSince = start
+	if run.Full {
+		a.yaraForceFull = false
+	}
+	fresh := make([]telemetry.Record, 0, len(records))
+	for _, r := range records {
+		p := r.Columns["path"]
+		if p == "" || a.yaraSeen[p] {
+			continue
+		}
+		a.yaraSeen[p] = true
+		fresh = append(fresh, r)
+	}
+	a.yaraMu.Unlock()
+	a.log.Debug("yara scan complete", "full", run.Full, "matches", len(records), "new", len(fresh),
+		"took", time.Since(start).Round(time.Millisecond).String())
+	if a.events != nil {
+		for _, ev := range a.engine.Evaluate(ctx, fresh) {
+			select {
+			case a.events <- ev:
+			case <-ctx.Done():
+				return scanResult{}, ctx.Err()
+			}
+		}
+	}
+	summary["hits"] = len(records)
+	summary["new_hits"] = len(fresh)
+	return scanResult{Summary: summary, Record: run.Full || len(fresh) > 0}, nil
 }
 
 // syncYaraRules downloads the server's YARA bundle when its version exceeds the
@@ -440,6 +501,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 		Status:       "online",
 		AgentVersion: version.Version,
 		Update:       a.updater.Report(),
+		Capabilities: []string{models.CapabilityAdhocScans},
 	})
 	if err != nil {
 		a.log.Debug("heartbeat failed", "err", err)
@@ -450,6 +512,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 		a.pollConfig(ctx)
 	}
 	a.considerUpdate(ctx)
+	a.handleScanRequests(ctx, resp.ScanRequests)
 }
 
 // considerUpdate prunes a finished update report the server no longer asks
@@ -487,15 +550,21 @@ func (a *Agent) pollConfig(ctx context.Context) {
 	a.syncYaraRules(ctx)
 }
 
-func (a *Agent) reportInventory(ctx context.Context) {
+// inventoryScan collects and sends the host facts. A failed send is spooled
+// (with its scan_id, so the server still links it when it arrives).
+func (a *Agent) inventoryScan(ctx context.Context, run *scanRun) (scanResult, error) {
 	req := models.InventoryRequest{
 		AgentID:   a.state.Identity.AgentID,
 		Inventory: inventory.Collect(),
+		ScanID:    run.ScanID,
 	}
+	summary := map[string]any{"software": len(req.Inventory.Software)}
 	if err := a.client.SendInventory(ctx, req); err != nil {
 		a.log.Debug("inventory send failed, spooling", "err", err)
 		a.spoolJSON("inventory", req)
+		summary["spooled"] = true
 	}
+	return scanResult{Summary: summary, Record: true}, nil
 }
 
 // reportPackages reads the host's package databases and sends the list to the
@@ -505,9 +574,25 @@ func (a *Agent) reportInventory(ctx context.Context) {
 // the next run supersedes a failed send. A server that answers 404 predates the
 // route: logged once, then retried after packageUnsupportedBackoff.
 func (a *Agent) reportPackages(ctx context.Context) {
+	_, _ = a.sendPackages(ctx, false, "")
+}
+
+// packageScan is the package inventory as a scan: on demand it always sends
+// the full list (force), so the server re-reads it even when unchanged.
+func (a *Agent) packageScan(ctx context.Context, run *scanRun) (scanResult, error) {
+	if !a.scanAvailable(models.ScanTypePackages) {
+		return scanResult{}, unavailable("package inventory is disabled on this agent (package_inventory=false)")
+	}
+	summary, err := a.sendPackages(ctx, run.Trigger == models.ScanTriggerConsole, run.ScanID)
+	return scanResult{Summary: summary, Record: true}, err
+}
+
+// sendPackages does one package report (see reportPackages); force sends the
+// full list with force=true. It returns the agent-side summary.
+func (a *Agent) sendPackages(ctx context.Context, force bool, scanID string) (map[string]any, error) {
 	now := a.now()
-	if now.Before(a.packagesUnsupported) {
-		return
+	if now.Before(a.packagesUnsupported) && !force {
+		return nil, errors.New("server does not accept package inventory (404 on /api/edr/packages)")
 	}
 	started := time.Now()
 	res := a.collectPackages(ctx)
@@ -518,15 +603,16 @@ func (a *Agent) reportPackages(ctx context.Context) {
 		// Nothing to report (no known package database, or every source
 		// failed). Never send an empty list: it would clear the server's.
 		a.log.Debug("package inventory found no packages", "sources", res.Sources)
-		return
+		return nil, errors.New("no installed packages found (no supported package database, or every source failed)")
 	}
+	summary := map[string]any{"packages": len(res.Packages)}
 	hash := packages.Hash(res.Packages)
 	var lastHash string
 	var lastSent time.Time
 	a.state.View(func(id *config.Identity) { lastHash, lastSent = id.PackagesHash, id.PackagesSentAt })
 
-	report := models.PackageReport{AgentID: a.state.Identity.AgentID, SnapshotHash: hash, CollectedAt: now.UTC()}
-	full := hash != lastHash || now.Sub(lastSent) >= packageResendEvery
+	report := models.PackageReport{AgentID: a.state.Identity.AgentID, SnapshotHash: hash, CollectedAt: now.UTC(), ScanID: scanID, Force: force}
+	full := force || hash != lastHash || now.Sub(lastSent) >= packageResendEvery
 	if full {
 		report.Packages = res.Packages
 	}
@@ -542,15 +628,15 @@ func (a *Agent) reportPackages(ctx context.Context) {
 		a.packagesUnsupported = now.Add(packageUnsupportedBackoff)
 		a.log.Info("server does not accept package inventory yet (404 on /api/edr/packages; update SIEMBox); will retry",
 			"retry_in", packageUnsupportedBackoff.String())
-		return
+		return summary, errors.New("server does not accept package inventory (404 on /api/edr/packages)")
 	}
 	if err != nil {
 		a.log.Debug("package inventory send failed; next run retries", "err", err)
-		return
+		return summary, fmt.Errorf("send package inventory: %w", err)
 	}
 	if !resp.Accepted {
 		a.log.Debug("package inventory not accepted", "response", resp)
-		return
+		return summary, errors.New("server did not accept the package inventory")
 	}
 	if err := a.state.Mutate(func(id *config.Identity) {
 		id.PackagesHash = hash
@@ -566,20 +652,36 @@ func (a *Agent) reportPackages(ctx context.Context) {
 	} else {
 		a.log.Debug("package inventory unchanged", "packages", len(res.Packages))
 	}
+	return summary, nil
 }
 
-func (a *Agent) runVulnScan(ctx context.Context) {
+// vulnScan runs the vulnerability scanner and sends its findings (spooled,
+// with the scan_id, when the send fails). Without grype (the noop scanner) a
+// scheduled run still sends its empty report, as before, but is not recorded;
+// an on-demand one fails with an explanation.
+func (a *Agent) vulnScan(ctx context.Context, run *scanRun) (scanResult, error) {
+	noop := !a.scanAvailable(models.ScanTypeVuln)
+	if noop && run.Trigger == models.ScanTriggerConsole {
+		return scanResult{}, unavailable("grype not found on this host; install grype to enable vulnerability scanning")
+	}
 	a.log.Info("starting vulnerability scan", "scanner", a.scanner.Name())
 	batch, err := a.scanner.Scan(ctx, a.state.Identity.AgentID)
 	if err != nil {
 		a.log.Error("vuln scan failed", "err", err)
-		return
+		return scanResult{Record: true}, fmt.Errorf("vulnerability scan: %w", err)
 	}
 	a.log.Info("vuln scan complete", "findings", len(batch.Vulnerabilities))
+	batch.ScanID = run.ScanID
+	summary := map[string]any{"findings": len(batch.Vulnerabilities)}
 	if err := a.client.SendVulnerabilities(ctx, batch); err != nil {
 		a.log.Debug("vuln send failed, spooling", "err", err)
 		a.spoolJSON("vulns", batch)
+		summary["spooled"] = true
 	}
+	if noop {
+		return scanResult{}, errScanUnavailable
+	}
+	return scanResult{Summary: summary, Record: true}, nil
 }
 
 // batchEvents accumulates detection events and flushes them by size or time.

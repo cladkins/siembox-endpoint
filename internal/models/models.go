@@ -93,12 +93,76 @@ type HeartbeatRequest struct {
 	// Update is the status of the most recent self-update attempt, omitted when
 	// there is none to report.
 	Update *UpdateReport `json:"update,omitempty"`
+	// Capabilities lists optional features the agent supports, so the server
+	// can tell users of older agents what they lack (CapabilityAdhocScans).
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
+// CapabilityAdhocScans: the agent runs the console's on-demand scan requests
+// (HeartbeatResponse.ScanRequests) and reports its scans to POST /api/edr/scans.
+const CapabilityAdhocScans = "adhoc_scans"
+
 // HeartbeatResponse tells the agent the current desired config version so it
-// knows whether to re-pull config.
+// knows whether to re-pull config, and carries pending on-demand scan requests.
 type HeartbeatResponse struct {
 	ConfigVersion int `json:"config_version"`
+	// ScanRequests are the console's pending on-demand scans, oldest first. A
+	// server that predates them omits the field.
+	ScanRequests []ScanRequest `json:"scan_requests,omitempty"`
+}
+
+// Scan types, triggers and reportable statuses for the scan history.
+const (
+	ScanTypeVuln      = "vuln"      // grype vulnerability scan
+	ScanTypeYara      = "yara"      // YARA file scan
+	ScanTypePackages  = "packages"  // installed-package inventory
+	ScanTypeInventory = "inventory" // host facts
+
+	ScanTriggerSchedule = "schedule"
+	ScanTriggerStartup  = "startup"
+	ScanTriggerConsole  = "console"
+
+	ScanStatusRunning   = "running"
+	ScanStatusSucceeded = "succeeded"
+	ScanStatusFailed    = "failed"
+	// Server-only statuses the agent may read back in a ScanReportResponse.
+	ScanStatusCancelled = "cancelled"
+	ScanStatusExpired   = "expired"
+)
+
+// ScanRequest is one on-demand scan the console asked for. ScanID is a
+// server-generated UUID; the agent runs a given ScanID at most once.
+type ScanRequest struct {
+	ScanID      string    `json:"scan_id"`
+	ScanType    string    `json:"scan_type"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+// ScanReport is sent to POST /api/edr/scans when a scan starts (Status
+// running) and when it ends (succeeded or failed). ScanID names a console
+// request, or the row the server created for a scheduled run's start report;
+// without one the server creates a row (Trigger schedule or startup) and
+// returns its id. Summary is a flat map of snake_case keys to numbers,
+// booleans or short strings.
+type ScanReport struct {
+	AgentID     string         `json:"agent_id"`
+	ScanID      string         `json:"scan_id,omitempty"`
+	ScanType    string         `json:"scan_type"`
+	Trigger     string         `json:"trigger"`
+	Status      string         `json:"status"`
+	StartedAt   *time.Time     `json:"started_at,omitempty"`
+	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	Summary     map[string]any `json:"summary,omitempty"`
+	Error       string         `json:"error,omitempty"` // <= 500 chars, only for failed
+}
+
+// ScanReportResponse is the server's answer to a ScanReport. Accepted is
+// false when the report changed nothing: Status cancelled or expired on a
+// start report means the agent must not run that request.
+type ScanReportResponse struct {
+	ScanID   string `json:"scan_id"`
+	Status   string `json:"status"`
+	Accepted bool   `json:"accepted"`
 }
 
 // Software is a single installed package/application discovered on the host.
@@ -127,6 +191,8 @@ type HostInventory struct {
 type InventoryRequest struct {
 	AgentID   string        `json:"agent_id"`
 	Inventory HostInventory `json:"inventory"`
+	// ScanID links the report to its scan history row (see ScanReport).
+	ScanID string `json:"scan_id,omitempty"`
 }
 
 // Event is a single detection or telemetry record. Detections are normalized
@@ -169,6 +235,8 @@ type VulnBatch struct {
 	ScanStartedAt   time.Time       `json:"scan_started_at"`
 	ScanCompletedAt time.Time       `json:"scan_completed_at"`
 	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
+	// ScanID links the report to its scan history row (see ScanReport).
+	ScanID string `json:"scan_id,omitempty"`
 }
 
 // Package is one installed software package on the host, as the package
@@ -192,6 +260,8 @@ type PackageReport struct {
 	CollectedAt  time.Time `json:"collected_at"`
 	Force        bool      `json:"force,omitempty"`
 	Packages     []Package `json:"packages,omitempty"`
+	// ScanID links the report to its scan history row (see ScanReport).
+	ScanID string `json:"scan_id,omitempty"`
 }
 
 // PackageReportResponse is the server's answer to a PackageReport.

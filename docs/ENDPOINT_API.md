@@ -54,10 +54,22 @@ Request:
 {
   "status": "online",
   "agent_version": "1.3.2",
-  "update": { "request_id": "b6f1c2d0-...", "version": "1.4.0", "state": "installing", "error": "" }
+  "update": { "request_id": "b6f1c2d0-...", "version": "1.4.0", "state": "installing", "error": "" },
+  "capabilities": ["adhoc_scans"]
 }
 ```
-Response `200`: `{ "config_version": 3 }`
+Response `200`:
+```json
+{
+  "config_version": 3,
+  "scan_requests": [{ "scan_id": "4c1e...", "scan_type": "vuln", "requested_at": "RFC3339" }]
+}
+```
+
+`capabilities` lists optional features: `adhoc_scans` means the agent runs
+`scan_requests` and reports its scans (see [Scans](#post-apiedrscans)).
+`scan_requests` are the console's pending on-demand scans, oldest first;
+older servers omit it and older agents ignore it.
 
 `update` is optional and present only while the agent has a self-update status to
 report (see [Agent self-update](#agent-self-update)). `state` is one of
@@ -277,6 +289,63 @@ Response `200`:
 list. `404`: a server that predates the route; the agent backs off for a day.
 Not spooled: the next run supersedes a failed send.
 
+### `POST /api/edr/scans`
+The scan history (SIEMBox migration 050). The agent reports when a scan starts
+and ends: vulnerability (`vuln`), YARA (`yara`), package inventory
+(`packages`), host inventory (`inventory`).
+
+```json
+{
+  "agent_id": "string",
+  "scan_id": "4c1e...",
+  "scan_type": "vuln",
+  "trigger": "console",
+  "status": "succeeded",
+  "started_at": "RFC3339",
+  "completed_at": "RFC3339",
+  "summary": { "findings": 41 },
+  "error": ""
+}
+```
+
+- `status`: `running` at the start, then `succeeded` or `failed` (`error`,
+  <= 500 chars, says why).
+- `scan_id` names a console request from `scan_requests`, or the row a
+  scheduled run's start report created. Without it (`trigger` `schedule` or
+  `startup`) the server creates a row and returns its id.
+- `summary`: flat, snake_case keys; numbers, booleans or short strings. The
+  agent sends `findings` (vuln), `packages` (packages), `software` (inventory),
+  `hits` / `new_hits` / `full` (yara), and `spooled: true` when the payload
+  was spooled. The server adds what it computes from the payload.
+
+Response `200`: `{ "scan_id": "4c1e...", "status": "running", "accepted": true }`.
+On a start report, `accepted: false` with `status` `cancelled` or `expired`
+means the request must not run. `404` without a `scan_id`: a server that
+predates the route; the agent stops reporting for a day (the scans still run).
+
+**Linking payloads.** `VulnBatch`, `PackageReport` and `InventoryRequest` carry
+the run's `scan_id` (omitted when it has none), so the server can write the
+counts it computes (new / no longer reported findings, packages added /
+removed / unchanged, inventory changed) into that run's summary. Spooled
+payloads keep it.
+
+**Agent behaviour.**
+- A console request runs at once without moving the schedule. A given
+  `scan_id` runs at most once, even though the heartbeat keeps serving it
+  until the start report lands.
+- One scan of a type at a time: a request that arrives while that scan is
+  running (scheduled or on demand) runs right after it. A scheduled run that
+  finds one running is skipped.
+- On demand, YARA reads every file (still at low priority, with the same
+  timeout and size cap) and the package inventory sends the full list
+  (`force: true`).
+- Scheduled runs are reported too: startup and scheduled vulnerability scans,
+  package and host inventories, and full YARA passes. The minute-by-minute
+  incremental YARA passes are reported only when they find a new match.
+- A scanner the host lacks (grype missing; YARA, which needs osquery; the
+  package inventory turned off) fails an on-demand request with the reason.
+  Its scheduled runs are not reported.
+
 ## Server-side mapping summary
 
 | Agent input        | SIEMBox table        | Notes                                    |
@@ -286,6 +355,7 @@ Not spooled: the next run supersedes a failed send.
 | events (detection) | `alerts` (reuse)     | normalized into existing alert pipeline  |
 | vulnerabilities    | `vulnerabilities`    | reuse, linked to endpoint asset          |
 | packages           | `edr_agent_packages` | full snapshot per agent (migration 049)  |
+| scans              | `edr_agent_scans`    | scan history + console requests (050)    |
 | yara (download)    | `edr_yara_bundle`    | curated YARA rule text + version         |
 
 New server tables: `edr_agents`, `edr_enrollment_tokens`, `edr_yara_bundle`.
