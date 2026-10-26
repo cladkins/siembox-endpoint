@@ -225,8 +225,10 @@ Response: `202 Accepted`.
 > working files from YARA scanning — the grype CVE database (`…/siembox-endpoint/
 > grype-*/…`, legacy `…/siembox-edr/…`) and the agent state directory. grype's
 > database legitimately embeds exploit/webshell signatures, so without this it
-> would self-trigger the rules. A `yara_scan` detection therefore always refers to
-> a file outside the agent's footprint.
+> would self-trigger the rules. The agent's own executable is excluded too, and the
+> built-in self-test rule spells its marker in hex so the binary never contains it
+> (agents before v0.0.21 matched themselves on every full scan). A `yara_scan`
+> detection therefore always refers to a file outside the agent's footprint.
 
 ### `POST /api/edr/vulnerabilities`
 Result of one local vuln scan. Upserted into the existing **vulnerabilities**
