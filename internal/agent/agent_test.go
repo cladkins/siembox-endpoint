@@ -56,7 +56,7 @@ func TestSyncYaraRulesAppliesUpdate(t *testing.T) {
 		t.Fatalf("read sig: %v", err)
 	}
 	s := string(data)
-	if !strings.Contains(s, "SIEMBOX_YARA_SELFTEST") {
+	if !strings.Contains(s, "rule SIEMBox_YARA_SelfTest") {
 		t.Error("baseline missing from written signatures")
 	}
 	if !strings.Contains(s, "rule ServerDelivered") {
@@ -134,5 +134,23 @@ func TestHeartbeatCarriesUpdateReportUntilConfigDropsIt(t *testing.T) {
 	a.heartbeat(context.Background())
 	if _, present := got[len(got)-1]["update"]; present {
 		t.Fatalf("update must be omitted once config no longer carries it: %v", got[len(got)-1])
+	}
+}
+
+func TestYaraScanExcludesOwnExecutable(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skip("no executable path")
+	}
+	a := &Agent{state: &config.State{Dir: t.TempDir()}}
+	a.WithYaraScan("", "", []string{"/tmp/%%"})
+	found := false
+	for _, x := range a.yaraExcludes {
+		if x == exe {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("yaraExcludes %v missing the agent executable %q", a.yaraExcludes, exe)
 	}
 }

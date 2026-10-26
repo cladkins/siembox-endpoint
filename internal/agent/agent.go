@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -153,6 +154,9 @@ func (a *Agent) WithYaraScan(osqueryiBin, sigPath string, paths []string) *Agent
 		"%/siembox-edr/%",      // legacy namespace (pre-rebrand installs)
 		a.state.Dir + "/%",     // state dir: yara sigs, osquery db, spool
 	}
+	// The agent's own executable embeds rule text and signature strings, so a
+	// pass over its install directory (e.g. /usr/local/bin) would match it.
+	a.yaraExcludes = append(a.yaraExcludes, selfExcludes()...)
 	return a
 }
 
@@ -784,4 +788,18 @@ func sec(v, def int) int {
 		return def
 	}
 	return v
+}
+
+// selfExcludes returns YARA exclude patterns for the running executable: its
+// path as invoked and, when that is a symlink, the resolved target.
+func selfExcludes() []string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return nil
+	}
+	out := []string{exe}
+	if real, err := filepath.EvalSymlinks(exe); err == nil && real != exe {
+		out = append(out, real)
+	}
+	return out
 }
