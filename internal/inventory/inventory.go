@@ -1,6 +1,6 @@
-// Package inventory collects host facts about the endpoint. Installed-software
-// enumeration is intentionally left to the vuln package's SBOM step (Syft) to
-// avoid duplicating package discovery; this package focuses on identity facts.
+// Package inventory collects host facts about the endpoint. Installed software
+// is reported separately, as a full snapshot (internal/packages, POST
+// /api/edr/packages); this package focuses on identity facts.
 package inventory
 
 import (
@@ -15,8 +15,8 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/version"
 )
 
-// Collect gathers host facts into a HostInventory. Software is populated
-// elsewhere (vuln SBOM) and left nil here.
+// Collect gathers host facts into a HostInventory. Software is left nil: the
+// package inventory (internal/packages) reports it on its own route.
 func Collect() models.HostInventory {
 	host, _ := os.Hostname()
 	ip, mac := primaryInterface()

@@ -170,3 +170,39 @@ type VulnBatch struct {
 	ScanCompletedAt time.Time       `json:"scan_completed_at"`
 	Vulnerabilities []Vulnerability `json:"vulnerabilities"`
 }
+
+// Package is one installed software package on the host, as the package
+// inventory reports it. Type is the ecosystem: "deb", "rpm", "apk", "brew",
+// "app" (a macOS app bundle), "pkg" (a macOS installer receipt), "msi"/"win"
+// (a Windows uninstall entry).
+type Package struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Type    string `json:"type"`
+}
+
+// PackageReport is a full snapshot of the host's installed packages, sent to
+// POST /api/edr/packages. It replaces the agent's previous snapshot on the
+// server. SnapshotHash identifies the list; when the server already has it,
+// nothing is written. Without Packages (nil), the request only asks whether the
+// server has SnapshotHash.
+type PackageReport struct {
+	AgentID      string    `json:"agent_id"`
+	SnapshotHash string    `json:"snapshot_hash"`
+	CollectedAt  time.Time `json:"collected_at"`
+	Force        bool      `json:"force,omitempty"`
+	Packages     []Package `json:"packages,omitempty"`
+}
+
+// PackageReportResponse is the server's answer to a PackageReport.
+type PackageReportResponse struct {
+	// Accepted: the snapshot was stored, or the server already had it.
+	Accepted bool `json:"accepted"`
+	// Unchanged: the server already had this snapshot; nothing was written.
+	Unchanged bool `json:"unchanged"`
+	// SnapshotRequired: a hash-only report the server does not have.
+	SnapshotRequired bool `json:"snapshot_required"`
+	PackageCount     int  `json:"package_count"`
+	Stored           int  `json:"stored"`
+	Removed          int  `json:"removed"`
+}

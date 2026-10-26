@@ -2,5 +2,7 @@
   "server_url": "http://siembox.example.lan:8421",
   "enrollment_token": "paste-token-from-siembox-ui",
   "ca_cert_path": "",
-  "insecure_skip_verify": false
+  "insecure_skip_verify": false,
+  "package_inventory": true,
+  "package_inventory_interval_seconds": 21600
 }

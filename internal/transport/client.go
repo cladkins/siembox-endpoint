@@ -5,6 +5,7 @@ package transport
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -145,6 +146,52 @@ func (c *Client) SendVulnerabilities(ctx context.Context, req models.VulnBatch) 
 	return c.do(ctx, http.MethodPost, "/api/edr/vulnerabilities", true, req, nil)
 }
 
+// SendPackages delivers the host's installed-package snapshot (or, with no
+// packages, asks whether the server has report.SnapshotHash). The body is
+// gzip-compressed: a host's list is ~1 MB of JSON that compresses ~10x.
+// A server that predates the route answers 404 (see StatusError).
+func (c *Client) SendPackages(ctx context.Context, report models.PackageReport) (models.PackageReportResponse, error) {
+	var resp models.PackageReportResponse
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return resp, fmt.Errorf("marshal request: %w", err)
+	}
+	var body bytes.Buffer
+	zw := gzip.NewWriter(&body)
+	if _, err := zw.Write(raw); err != nil {
+		return resp, err
+	}
+	if err := zw.Close(); err != nil {
+		return resp, err
+	}
+	const path = "/api/edr/packages"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &body)
+	if err != nil {
+		return resp, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.agentAPIKey)
+	req.Header.Set("X-Agent-ID", c.agentID)
+	if err := c.send(req, http.MethodPost, path, &resp); err != nil {
+		return resp, err
+	}
+	return resp, nil
+}
+
+// StatusError is a non-2xx answer from the server.
+type StatusError struct {
+	Method string
+	Path   string
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s %s: status %d: %s", e.Method, e.Path, e.Status, e.Body)
+}
+
 // PostRaw sends an already-serialized JSON body to an authenticated endpoint.
 // Used by the spool to replay queued payloads without re-typing them.
 func (c *Client) PostRaw(ctx context.Context, path string, raw []byte) error {
@@ -191,7 +238,12 @@ func (c *Client) do(ctx context.Context, method, path string, auth bool, in, out
 		req.Header.Set("Authorization", "Bearer "+c.agentAPIKey)
 		req.Header.Set("X-Agent-ID", c.agentID)
 	}
+	return c.send(req, method, path, out)
+}
 
+// send performs req; a non-2xx answer becomes a *StatusError carrying a snippet
+// of the body, and a 2xx JSON body is decoded into out unless out is nil.
+func (c *Client) send(req *http.Request, method, path string, out any) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -200,7 +252,7 @@ func (c *Client) do(ctx context.Context, method, path string, auth bool, in, out
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return &StatusError{Method: method, Path: path, Status: resp.StatusCode, Body: strings.TrimSpace(string(snippet))}
 	}
 
 	if out != nil {

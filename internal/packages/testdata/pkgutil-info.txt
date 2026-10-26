@@ -1,0 +1,5 @@
+package-id: org.wireshark.Wireshark
+version: 4.2.5
+volume: /
+location: /
+install-time: 1718000000

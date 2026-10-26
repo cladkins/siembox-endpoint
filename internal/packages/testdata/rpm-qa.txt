@@ -1,0 +1,6 @@
+bash	5.1.8-9.el9
+openssl	1:3.0.7-27.el9
+gpg-pubkey	fd431d51-4ae0493b
+kernel	5.14.0-427.13.1.el9_4
+kernel	5.14.0-362.24.1.el9_3
+

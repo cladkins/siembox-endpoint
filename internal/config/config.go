@@ -36,6 +36,36 @@ type Settings struct {
 	// OsqueryBinary is the osqueryd executable to use (name on PATH or absolute
 	// path). Empty defaults to "osqueryd".
 	OsqueryBinary string `json:"osquery_binary,omitempty"`
+	// PackageInventory turns the installed-software report (POST
+	// /api/edr/packages) on or off. Unset means on.
+	PackageInventory *bool `json:"package_inventory,omitempty"`
+	// PackageInventoryIntervalSec is how often the package databases are
+	// re-read. 0 means DefaultPackageInventoryIntervalSec; values under
+	// MinPackageInventoryIntervalSec are raised to it.
+	PackageInventoryIntervalSec int `json:"package_inventory_interval_seconds,omitempty"`
+}
+
+// Package inventory schedule bounds.
+const (
+	DefaultPackageInventoryIntervalSec = 6 * 60 * 60
+	MinPackageInventoryIntervalSec     = 5 * 60
+)
+
+// PackageInventoryEnabled reports whether the package inventory runs (default on).
+func (s Settings) PackageInventoryEnabled() bool {
+	return s.PackageInventory == nil || *s.PackageInventory
+}
+
+// PackageInventoryInterval is the package inventory's re-read interval.
+func (s Settings) PackageInventoryInterval() time.Duration {
+	sec := s.PackageInventoryIntervalSec
+	if sec <= 0 {
+		sec = DefaultPackageInventoryIntervalSec
+	}
+	if sec < MinPackageInventoryIntervalSec {
+		sec = MinPackageInventoryIntervalSec
+	}
+	return time.Duration(sec) * time.Second
 }
 
 // Identity is the persisted result of enrollment.
@@ -57,6 +87,12 @@ type Identity struct {
 	// LastUpdateRequestID is the most recent update request id the agent acted
 	// on. A request id is attempted at most once.
 	LastUpdateRequestID string `json:"last_update_request_id,omitempty"`
+
+	// PackagesHash is the hash of the last package snapshot the server
+	// accepted, and PackagesSentAt when the full list was last sent. The list
+	// is sent again only when the hash changes, or once a day.
+	PackagesHash   string    `json:"packages_hash,omitempty"`
+	PackagesSentAt time.Time `json:"packages_sent_at,omitzero"`
 }
 
 // PendingUpdate records an in-flight self-update.

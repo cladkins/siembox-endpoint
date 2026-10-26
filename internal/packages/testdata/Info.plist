@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>HTML Document</string>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>firefox</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.mozilla.firefox</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15.0</string>
+	<key>LSRequiresNativeExecution</key>
+	<true/>
+	<key>CFBundleName</key>
+	<string>Firefox</string>
+	<key>CFBundleShortVersionString</key>
+	<string>131.0.3</string>
+	<key>CFBundleVersion</key>
+	<string>13124.10.14</string>
+</dict>
+</plist>
