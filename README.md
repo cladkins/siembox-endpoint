@@ -145,6 +145,18 @@ startup). It's logged by the running agent and shipped to SIEMBox. Delete the
 file afterward. Re-testing won't re-fire for an already-seen path within the same
 agent run — use a fresh filename or restart the agent.
 
+### On-demand scans and scan history
+
+From SIEMBox's *Endpoints* page, analysts can ask an endpoint to run a
+vulnerability scan, a YARA file scan, a package inventory or a host inventory
+**now** (*Scan now* on one endpoint, *Scan selected* for several). The agent
+picks the request up on its next heartbeat (about a minute), runs it without
+moving its schedule, and never runs two scans of one type at once. Every scan
+it runs, scheduled or on demand, appears in the endpoint's *Scan history* with
+its status and a summary. Needs a SIEMBox server with scan history; against
+an older server the scans run as before and nothing is reported. Like
+everything else, scans only observe.
+
 ## How it talks to SIEMBox
 
 The agent speaks the HTTP API documented in **[`docs/ENDPOINT_API.md`](docs/ENDPOINT_API.md)**
