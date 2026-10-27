@@ -55,7 +55,7 @@ Request:
   "status": "online",
   "agent_version": "1.3.2",
   "update": { "request_id": "b6f1c2d0-...", "version": "1.4.0", "state": "installing", "error": "" },
-  "capabilities": ["adhoc_scans", "policy_scans"]
+  "capabilities": ["adhoc_scans", "policy_scans", "perf_metrics"]
 }
 ```
 Response `200`:
@@ -72,7 +72,11 @@ Response `200`:
 `capabilities` lists optional features: `adhoc_scans` means the agent runs
 `scan_requests` and reports its scans (see [Scans](#post-apiedrscans));
 `policy_scans` means it follows the config's `scan_policy`, so the server may
-schedule its scans (see [Scan policies](#scan-policies)).
+schedule its scans (see [Scan policies](#scan-policies));
+`perf_metrics` means it reports machine performance to
+`POST /api/edr/metrics` and follows the config's `performance` (see
+[Machine performance](#machine-performance)); an agent with
+`performance_metrics: false` in its `agent.json` does not send it.
 `scan_requests` are the pending scans the server asks for, oldest first:
 `trigger` `console` is an analyst's on-demand scan, `policy` one the
 endpoint's scan policy made due. A server that predates scan policies omits
@@ -104,9 +108,19 @@ Return the current `AgentConfig`.
     "policy": "Servers",
     "scans": { "vuln": { "enabled": true }, "yara": { "enabled": false },
                "packages": { "enabled": true }, "inventory": { "enabled": true } }
+  },
+  "performance": {
+    "enabled": true, "processes": true,
+    "sample_interval_seconds": 60, "send_interval_seconds": 60,
+    "process_interval_seconds": 300, "top_processes": 10
   }
 }
 ```
+
+`performance` is sent by a server with machine performance (SIEMBox migration
+055), from the endpoint's scan policy; see
+[Machine performance](#machine-performance). Without it the agent uses the
+same defaults.
 
 `scan_policy` is sent by a server with scan policies (SIEMBox migration 054);
 see [Scan policies](#scan-policies). Without it, or with `managed: false`, the
@@ -402,6 +416,73 @@ schedules and decides when a scan is due; the agent never computes them.
 - An older agent (no `policy_scans`) ignores `scan_policy`; the server issues
   it no policy scans and it keeps its own intervals.
 
+### Machine performance
+
+#### `POST /api/edr/metrics`
+Agent auth. Per-minute samples (oldest first) and top-process snapshots taken
+since the last accepted batch. Sent about once a minute.
+
+```json
+{
+  "agent_id": "string",
+  "samples": [
+    {
+      "ts": "RFC3339 (whole seconds)",
+      "cpu_pct": 12.5,
+      "cpu_count": 8,
+      "mem_total": 17179869184,
+      "mem_used": 6442450944,
+      "swap_total": 2147483648,
+      "swap_used": 0,
+      "load1": 0.42, "load5": 0.51, "load15": 0.48,
+      "uptime_seconds": 86400,
+      "disks": [{ "mount": "/", "fs": "ext4", "total": 100000000000, "used": 61000000000, "free": 34000000000 }],
+      "net": [{ "iface": "eth0", "rx_bps": 125000.5, "tx_bps": 20000 }]
+    }
+  ],
+  "processes": [
+    {
+      "ts": "RFC3339",
+      "by_cpu": [{ "pid": 812, "name": "postgres", "user": "postgres", "cpu_pct": 35.2, "mem_rss": 524288000, "mem_pct": 3.1 }],
+      "by_mem": [ "...same shape..." ]
+    }
+  ]
+}
+```
+Response `200`: `{ "accepted": 1, "duplicate": 0, "rejected": 0, "processes": 1, "alerts_opened": 0, "alerts_recovered": 0 }`.
+
+- `cpu_pct`: share of all CPUs busy since the previous sample (0–100). On
+  macOS it is the sum of the processes' `ps` %CPU over the core count.
+- `mem_used`: memory not available to new allocations (Linux:
+  `MemTotal - MemAvailable`; macOS: total minus free, inactive and speculative
+  pages; Windows: total minus available physical memory).
+- `load*`: omitted on Windows. `uptime_seconds`: since boot.
+- `disks`: local filesystems only (no network, pseudo or read-only image
+  filesystems; bind mounts of the same filesystem once), at most 32; `free` is
+  what an unprivileged user may still write, so the used share is
+  `used / (used + free)`, as df shows it.
+- `net`: bytes/s per interface since the previous sample (loopback and
+  container veth interfaces left out), at most 16; an interface whose counters
+  went backwards (a reset) is skipped for that sample.
+- Processes: CPU % of ONE core averaged since the previous snapshot (top's
+  convention), resident memory, user. Names only, never command lines.
+  Kernel threads (no resident memory) are left out.
+- The server stores each `(agent, ts)` once (`duplicate` for a repeat), so the
+  agent may re-send a batch whose answer it did not get. `400` refuses the whole
+  batch (the agent drops it); `404` means the server predates the route (the
+  agent drops what it has and tries again after an hour).
+
+Agent behaviour: sample every `sample_interval_seconds` (default 60; 30–600),
+send every `send_interval_seconds` (60; 60–900), processes every
+`process_interval_seconds` (300; 60–3600), `top_processes` per list (10; at
+most 25). Unsent data waits in a buffer of 180 samples and 12 snapshots
+(oldest dropped beyond), written to `metrics-pending.json` in the state
+directory on shutdown and sent after a restart if under 6 hours old.
+`enabled: false` from the server stops sampling and drops the buffer;
+`processes: false` stops the process snapshots. The local `agent.json`
+switches `performance_metrics` / `performance_processes` (`false`) win over
+the server.
+
 ## Server-side mapping summary
 
 | Agent input        | SIEMBox table        | Notes                                    |
@@ -412,6 +493,7 @@ schedules and decides when a scan is due; the agent never computes them.
 | vulnerabilities    | `vulnerabilities`    | reuse, linked to endpoint asset          |
 | packages           | `edr_agent_packages` | full snapshot per agent (migration 049)  |
 | scans              | `edr_agent_scans`    | scan history + console requests (050)    |
+| metrics            | `edr_perf_samples`   | per-minute samples, hourly rollups (055) |
 | yara (download)    | `edr_yara_bundle`    | curated YARA rule text + version         |
 
 New server tables: `edr_agents`, `edr_enrollment_tokens`, `edr_yara_bundle`.

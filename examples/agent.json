@@ -4,5 +4,7 @@
   "ca_cert_path": "",
   "insecure_skip_verify": false,
   "package_inventory": true,
-  "package_inventory_interval_seconds": 21600
+  "package_inventory_interval_seconds": 21600,
+  "performance_metrics": true,
+  "performance_processes": true
 }

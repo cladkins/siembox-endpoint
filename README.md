@@ -170,6 +170,27 @@ passes come from the policy. An endpoint that was offline runs each missed
 scan once when it reconnects. Against an older server the agent keeps its own
 intervals. See `docs/ENDPOINT_API.md` → *Scan policies*.
 
+### Machine performance
+
+Every minute the agent samples the host's performance — CPU %, memory used /
+total, swap, load average (not on Windows), uptime, disk use per local
+filesystem and network throughput per interface — and every 5 minutes the 10
+busiest processes by CPU and by memory (names, never command lines). It sends
+them in a small batch every minute to `POST /api/edr/metrics`; SIEMBox charts
+them in the endpoint's *Performance* tab and raises alerts on the thresholds
+of the endpoint's scan policy (disk over 90%, CPU over 95% for 10 minutes...).
+While the server is unreachable up to 3 hours of samples wait (kept across a
+restart) and go out when it is back.
+
+No extra tools or dependencies: Linux reads `/proc`, macOS uses sysctl plus
+`vm_stat`, `netstat` and `ps`, Windows the Win32 APIs. A sample costs a few
+small file reads; a process snapshot one read per process every 5 minutes.
+On by default: turn it off with `"performance_metrics": false` (or only the
+processes with `"performance_processes": false`); the server's scan policy can
+turn either off too. `siembox-agent metrics` prints one sample. Against a
+server without the route (404) the agent sends nothing and tries again
+hourly. See `docs/ENDPOINT_API.md` → *Machine performance*.
+
 ## How it talks to SIEMBox
 
 The agent speaks the HTTP API documented in **[`docs/ENDPOINT_API.md`](docs/ENDPOINT_API.md)**
@@ -230,7 +251,9 @@ Optional keys: `grype_binary`, `vuln_scan_target`, `osquery_binary` (see above),
 `package_inventory` (`false` turns the installed-software report off; default
 on) and `package_inventory_interval_seconds` (default 21600; not used while
 the server's scan policy schedules scans, though `package_inventory: false`
-still keeps the package inventory off on this host).
+still keeps the package inventory off on this host), `performance_metrics`
+and `performance_processes` (`false` turns machine performance reporting, or
+only its top-processes part, off; default on).
 
 See [`examples/agent.json`](examples/agent.json). On first run the agent consumes
 the enrollment token, persists its identity to `identity.json` (mode 0600), and
@@ -334,6 +357,7 @@ real scanners locally and print JSON to stdout:
 sudo siembox-agent scan     # one-shot grype vulnerability scan -> findings JSON
 sudo siembox-agent check    # one-shot osquery snapshot + Sigma eval -> detections JSON
 sudo siembox-agent packages # one-shot installed-package inventory -> packages JSON
+siembox-agent metrics       # one performance sample + top processes (2 s window) -> JSON
 ```
 
 ## Build & test (from source)

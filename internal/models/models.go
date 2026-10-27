@@ -64,6 +64,23 @@ type AgentConfig struct {
 	// heartbeat issues (ScanRequest.Trigger "policy"). A server that predates
 	// scan policies omits it, and the agent keeps its own intervals.
 	ScanPolicy *ScanPolicy `json:"scan_policy,omitempty"`
+	// Performance, when present, is the server's performance-metrics setting
+	// for this agent (the endpoint's scan policy). A server that predates
+	// performance metrics omits it, and the agent uses its own defaults.
+	Performance *PerformanceConfig `json:"performance,omitempty"`
+}
+
+// PerformanceConfig is the server's say over machine performance reporting
+// (POST /api/edr/metrics). Zero intervals mean the agent's defaults.
+type PerformanceConfig struct {
+	// Enabled: collect and send the per-minute samples at all.
+	Enabled bool `json:"enabled"`
+	// Processes: also send the top processes by CPU and memory.
+	Processes          bool `json:"processes"`
+	SampleIntervalSec  int  `json:"sample_interval_seconds,omitempty"`
+	SendIntervalSec    int  `json:"send_interval_seconds,omitempty"`
+	ProcessIntervalSec int  `json:"process_interval_seconds,omitempty"`
+	TopProcesses       int  `json:"top_processes,omitempty"`
 }
 
 // ScanPolicy is the agent's effective scan policy as far as the agent needs
@@ -141,6 +158,11 @@ const CapabilityAdhocScans = "adhoc_scans"
 // server may schedule its scans and issue them as ScanRequests with Trigger
 // "policy".
 const CapabilityPolicyScans = "policy_scans"
+
+// CapabilityPerfMetrics: the agent reports machine performance (CPU, memory,
+// disks, load, uptime, network, top processes) to POST /api/edr/metrics and
+// follows AgentConfig.Performance.
+const CapabilityPerfMetrics = "perf_metrics"
 
 // HeartbeatResponse tells the agent the current desired config version so it
 // knows whether to re-pull config, and carries pending on-demand scan requests.
@@ -320,4 +342,80 @@ type PackageReportResponse struct {
 	PackageCount     int  `json:"package_count"`
 	Stored           int  `json:"stored"`
 	Removed          int  `json:"removed"`
+}
+
+// MetricSample is one point-in-time reading of the host's performance, taken
+// about once a minute. Percentages are 0-100 of the whole machine; byte
+// counts are bytes. Load is nil where the OS has no load average (Windows).
+type MetricSample struct {
+	Timestamp time.Time `json:"ts"`
+	// CPUPct is the share of all CPUs busy since the previous sample.
+	CPUPct    float64     `json:"cpu_pct"`
+	CPUCount  int         `json:"cpu_count,omitempty"`
+	MemTotal  uint64      `json:"mem_total"`
+	MemUsed   uint64      `json:"mem_used"`
+	SwapTotal uint64      `json:"swap_total"`
+	SwapUsed  uint64      `json:"swap_used"`
+	Load1     *float64    `json:"load1,omitempty"`
+	Load5     *float64    `json:"load5,omitempty"`
+	Load15    *float64    `json:"load15,omitempty"`
+	UptimeSec uint64      `json:"uptime_seconds"`
+	Disks     []DiskUsage `json:"disks,omitempty"`
+	Net       []NetRate   `json:"net,omitempty"`
+}
+
+// DiskUsage is one mounted local filesystem. Used + Free can be less than
+// Total (blocks reserved for root); the used share is Used / (Used + Free),
+// as df reports it.
+type DiskUsage struct {
+	Mount  string `json:"mount"`
+	FSType string `json:"fs,omitempty"`
+	Total  uint64 `json:"total"`
+	Used   uint64 `json:"used"`
+	Free   uint64 `json:"free"`
+}
+
+// NetRate is one network interface's average throughput since the previous
+// sample, bytes per second.
+type NetRate struct {
+	Iface string  `json:"iface"`
+	RxBps float64 `json:"rx_bps"`
+	TxBps float64 `json:"tx_bps"`
+}
+
+// ProcessInfo is one process in a ProcessSnapshot. CPUPct is the share of
+// ONE CPU it used since the previous snapshot (top/ps convention: it can
+// exceed 100 on a multi-core host); MemPct is its resident memory as a share
+// of the host's.
+type ProcessInfo struct {
+	PID    int     `json:"pid"`
+	Name   string  `json:"name"`
+	User   string  `json:"user,omitempty"`
+	CPUPct float64 `json:"cpu_pct"`
+	MemRSS uint64  `json:"mem_rss"`
+	MemPct float64 `json:"mem_pct"`
+}
+
+// ProcessSnapshot is the top processes by CPU and by memory at one time
+// (every few minutes). Only names are sent, never command lines.
+type ProcessSnapshot struct {
+	Timestamp time.Time     `json:"ts"`
+	ByCPU     []ProcessInfo `json:"by_cpu"`
+	ByMem     []ProcessInfo `json:"by_mem"`
+}
+
+// MetricsBatch is sent to POST /api/edr/metrics: the samples (oldest first)
+// and process snapshots taken since the last accepted batch.
+type MetricsBatch struct {
+	AgentID   string            `json:"agent_id"`
+	Samples   []MetricSample    `json:"samples"`
+	Processes []ProcessSnapshot `json:"processes,omitempty"`
+}
+
+// MetricsResponse is the server's answer to a MetricsBatch.
+type MetricsResponse struct {
+	Accepted  int `json:"accepted"`
+	Duplicate int `json:"duplicate"`
+	Rejected  int `json:"rejected"`
+	Processes int `json:"processes"`
 }

@@ -138,7 +138,7 @@ func TestConsoleRequestRunsOnceAndIsReported(t *testing.T) {
 	a.heartbeat(ctx)
 	a.scans.wg.Wait()
 
-	if len(fake.heartbeats) != 2 || strings.Join(fake.heartbeats[0].Capabilities, ",") != models.CapabilityAdhocScans+","+models.CapabilityPolicyScans {
+	if len(fake.heartbeats) != 2 || !strings.HasPrefix(strings.Join(fake.heartbeats[0].Capabilities, ","), models.CapabilityAdhocScans+","+models.CapabilityPolicyScans) {
 		t.Fatalf("heartbeat capabilities: %+v", fake.heartbeats)
 	}
 	if len(fake.packages) != 1 || !fake.packages[0].Force || fake.packages[0].ScanID != "req-1" || len(fake.packages[0].Packages) != 1 {

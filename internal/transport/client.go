@@ -188,6 +188,14 @@ func (c *Client) SendPackages(ctx context.Context, report models.PackageReport) 
 	return resp, nil
 }
 
+// SendMetrics delivers performance samples and process snapshots. A server
+// that predates the route answers 404 (see StatusError).
+func (c *Client) SendMetrics(ctx context.Context, batch models.MetricsBatch) (models.MetricsResponse, error) {
+	var resp models.MetricsResponse
+	err := c.do(ctx, http.MethodPost, "/api/edr/metrics", true, batch, &resp)
+	return resp, err
+}
+
 // StatusError is a non-2xx answer from the server.
 type StatusError struct {
 	Method string
