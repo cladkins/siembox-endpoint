@@ -157,6 +157,19 @@ its status and a summary. Needs a SIEMBox server with scan history; against
 an older server the scans run as before and nothing is reported. Like
 everything else, scans only observe.
 
+### Scan policies
+
+With a SIEMBox server that has scan policies (*Endpoints → Scan policies*),
+the server decides which scans each endpoint runs and when: a default policy,
+named policies and per-endpoint overrides, with calendar or interval schedules
+and optional time windows. The agent then runs no scans of its own schedule
+(the intervals below and its startup scans stop) and runs each scan the
+server issues on a heartbeat, recorded in the scan history as *policy*. While
+YARA is enabled, changed files are still checked every minute; full YARA
+passes come from the policy. An endpoint that was offline runs each missed
+scan once when it reconnects. Against an older server the agent keeps its own
+intervals. See `docs/ENDPOINT_API.md` → *Scan policies*.
+
 ## How it talks to SIEMBox
 
 The agent speaks the HTTP API documented in **[`docs/ENDPOINT_API.md`](docs/ENDPOINT_API.md)**
@@ -215,7 +228,9 @@ API.
 
 Optional keys: `grype_binary`, `vuln_scan_target`, `osquery_binary` (see above),
 `package_inventory` (`false` turns the installed-software report off; default
-on) and `package_inventory_interval_seconds` (default 21600).
+on) and `package_inventory_interval_seconds` (default 21600; not used while
+the server's scan policy schedules scans, though `package_inventory: false`
+still keeps the package inventory off on this host).
 
 See [`examples/agent.json`](examples/agent.json). On first run the agent consumes
 the enrollment token, persists its identity to `identity.json` (mode 0600), and

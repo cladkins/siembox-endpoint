@@ -169,6 +169,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	a.log.Info("agent running", "agent_id", a.state.Identity.AgentID, "version", version.Version)
 
+	// Re-read the server config before deciding what to run: the cached copy
+	// may predate fields this build understands (scan_policy, after a
+	// self-update) without its config_version having moved. Best-effort; the
+	// cached config applies when the server is unreachable.
+	a.fetchConfig(ctx, true)
+	if p := a.scanPolicy(); p != nil {
+		a.log.Info("scans are scheduled by the server's scan policy", "policy", p.Policy)
+	}
+
 	// Resolve a self-update left in flight by the previous process (succeeded if
 	// we now run the target version, failed otherwise) so the first heartbeat
 	// reports it, then act on any not-yet-attempted request in the cached config.
@@ -197,8 +206,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.log.Warn("load rules", "err", err)
 	}
 
-	// Send an inventory snapshot immediately on startup.
-	a.runScan(ctx, models.ScanTypeInventory, models.ScanTriggerStartup, nil)
+	// Send an inventory snapshot immediately on startup (unless the server
+	// schedules scans: its policy issues them).
+	if a.ownSchedule() {
+		a.runScan(ctx, models.ScanTypeInventory, models.ScanTriggerStartup, nil)
+	}
 
 	var wg sync.WaitGroup
 	events := make(chan models.Event, 256)
@@ -211,11 +223,20 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Run an initial vulnerability scan shortly after startup so a newly
 	// enrolled endpoint surfaces vuln data without waiting for the first tick.
-	run(func() { a.runScan(ctx, models.ScanTypeVuln, models.ScanTriggerStartup, nil) })
+	if a.ownSchedule() {
+		run(func() { a.runScan(ctx, models.ScanTypeVuln, models.ScanTriggerStartup, nil) })
+	}
 
 	cfg := a.state.Identity.Config
+	// The agent's own intervals; each tick is skipped while the server
+	// schedules scans (checked per tick, so a config change applies at once).
 	scheduled := func(t string) func(context.Context) {
-		return func(ctx context.Context) { a.runScan(ctx, t, models.ScanTriggerSchedule, nil) }
+		return func(ctx context.Context) {
+			if !a.ownSchedule() {
+				return
+			}
+			a.runScan(ctx, t, models.ScanTriggerSchedule, nil)
+		}
 	}
 	run(func() { a.tick(ctx, sec(cfg.HeartbeatIntervalSec, defaultHeartbeatSec), a.heartbeat) })
 	run(func() { a.tick(ctx, sec(cfg.ConfigPollIntervalSec, defaultConfigPollSec), a.pollConfig) })
@@ -226,7 +247,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.state.Settings.PackageInventoryEnabled() {
 		interval := int(a.state.Settings.PackageInventoryInterval() / time.Second)
 		run(func() {
-			a.runScan(ctx, models.ScanTypePackages, models.ScanTriggerStartup, nil)
+			if a.ownSchedule() {
+				a.runScan(ctx, models.ScanTypePackages, models.ScanTriggerStartup, nil)
+			}
 			a.tick(ctx, interval, scheduled(models.ScanTypePackages))
 		})
 	} else {
@@ -355,11 +378,21 @@ func (a *Agent) runDetection(ctx context.Context, events chan<- models.Event) {
 // a cadence the agent controls and logs. A YARA rule update (yaraRescan)
 // makes the next pass full. On-demand passes come through runScan too, so they
 // never overlap a scheduled one.
+//
+// When the server schedules scans (scan policy), full passes are the policy's
+// (policy requests): there is no startup pass, a rule update does not force
+// one (the next policy pass uses the new rules), and the per-minute pass
+// checks only files changed since the agent started. A policy that disables
+// YARA stops the per-minute pass too.
 func (a *Agent) runYaraScans(ctx context.Context) {
 	if !a.scanAvailable(models.ScanTypeYara) {
 		return
 	}
-	a.runScan(ctx, models.ScanTypeYara, models.ScanTriggerStartup, nil) // full scan of files already present
+	if a.ownSchedule() {
+		a.runScan(ctx, models.ScanTypeYara, models.ScanTriggerStartup, nil) // full scan of files already present
+	} else {
+		a.yaraWatchFrom(time.Now())
+	}
 	ticker := time.NewTicker(time.Duration(osquery.YaraScanIntervalSec) * time.Second)
 	defer ticker.Stop()
 	for {
@@ -367,14 +400,47 @@ func (a *Agent) runYaraScans(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-a.yaraRescan:
-			a.yaraMu.Lock()
-			a.yaraForceFull = true
-			a.yaraMu.Unlock()
+			if a.ownSchedule() {
+				a.yaraMu.Lock()
+				a.yaraForceFull = true
+				a.yaraMu.Unlock()
+			}
 		case <-ticker.C:
+			if p := a.scanPolicy(); p != nil {
+				if !p.Enabled(models.ScanTypeYara) {
+					continue
+				}
+				a.yaraWatchFrom(time.Now())
+			}
 			a.runScan(ctx, models.ScanTypeYara, models.ScanTriggerSchedule, nil)
 		}
 	}
 }
+
+// yaraWatchFrom starts the incremental YARA pass at t when it has no cutoff
+// yet, so it reads only files changed from then on instead of every file.
+func (a *Agent) yaraWatchFrom(t time.Time) {
+	a.yaraMu.Lock()
+	if a.yaraSince.IsZero() {
+		a.yaraSince = t
+	}
+	a.yaraMu.Unlock()
+}
+
+// scanPolicy is the server's scan policy from the current config, or nil when
+// the server does not schedule this agent's scans.
+func (a *Agent) scanPolicy() *models.ScanPolicy {
+	var p *models.ScanPolicy
+	a.state.View(func(id *config.Identity) { p = id.Config.ScanPolicy })
+	if !p.IsManaged() {
+		return nil
+	}
+	return p
+}
+
+// ownSchedule reports whether the agent runs its own scan intervals and
+// startup scans (no server scan policy).
+func (a *Agent) ownSchedule() bool { return a.scanPolicy() == nil }
 
 // yaraNextFull: whether a YARA pass with this trigger reads every file. The
 // first pass, startup and on-demand passes and the pass after a rule update do;
@@ -505,7 +571,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 		Status:       "online",
 		AgentVersion: version.Version,
 		Update:       a.updater.Report(),
-		Capabilities: []string{models.CapabilityAdhocScans},
+		Capabilities: []string{models.CapabilityAdhocScans, models.CapabilityPolicyScans},
 	})
 	if err != nil {
 		a.log.Debug("heartbeat failed", "err", err)
@@ -513,7 +579,7 @@ func (a *Agent) heartbeat(ctx context.Context) {
 	}
 	if resp.ConfigVersion > a.state.Identity.Config.ConfigVersion {
 		a.log.Info("new config available", "version", resp.ConfigVersion)
-		a.pollConfig(ctx)
+		a.fetchConfig(ctx, false)
 	}
 	a.considerUpdate(ctx)
 	a.handleScanRequests(ctx, resp.ScanRequests)
@@ -533,14 +599,27 @@ func (a *Agent) considerUpdate(ctx context.Context) {
 	a.updater.Consider(ctx, req)
 }
 
-func (a *Agent) pollConfig(ctx context.Context) {
+func (a *Agent) pollConfig(ctx context.Context) { a.fetchConfig(ctx, false) }
+
+// fetchConfig pulls the server config and applies it when its version
+// differs from the applied one, or always with force.
+func (a *Agent) fetchConfig(ctx context.Context, force bool) {
 	cfg, err := a.client.FetchConfig(ctx)
 	if err != nil {
 		a.log.Debug("config fetch failed", "err", err)
 		return
 	}
-	if cfg.ConfigVersion == a.state.Identity.Config.ConfigVersion {
+	var prev models.AgentConfig
+	a.state.View(func(id *config.Identity) { prev = id.Config })
+	if cfg.ConfigVersion == prev.ConfigVersion && !force {
 		return
+	}
+	if was, now := prev.ScanPolicy.IsManaged(), cfg.ScanPolicy.IsManaged(); was != now {
+		if now {
+			a.log.Info("the server now schedules this agent's scans (scan policy)", "policy", cfg.ScanPolicy.Policy)
+		} else {
+			a.log.Info("the server no longer schedules scans; using the agent's own intervals")
+		}
 	}
 	if err := a.state.Mutate(func(id *config.Identity) { id.Config = cfg }); err != nil {
 		a.log.Warn("persist config", "err", err)
@@ -662,10 +741,10 @@ func (a *Agent) sendPackages(ctx context.Context, force bool, scanID string) (ma
 // vulnScan runs the vulnerability scanner and sends its findings (spooled,
 // with the scan_id, when the send fails). Without grype (the noop scanner) a
 // scheduled run still sends its empty report, as before, but is not recorded;
-// an on-demand one fails with an explanation.
+// an on-demand or policy one fails with an explanation.
 func (a *Agent) vulnScan(ctx context.Context, run *scanRun) (scanResult, error) {
 	noop := !a.scanAvailable(models.ScanTypeVuln)
-	if noop && run.Trigger == models.ScanTriggerConsole {
+	if noop && requested(run.Trigger) {
 		return scanResult{}, unavailable("grype not found on this host; install grype to enable vulnerability scanning")
 	}
 	a.log.Info("starting vulnerability scan", "scanner", a.scanner.Name())
