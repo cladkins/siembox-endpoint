@@ -58,6 +58,41 @@ type AgentConfig struct {
 	// AgentUpdate is the server's pending request to update the agent binary, or
 	// nil when none is requested. See AgentUpdateRequest.
 	AgentUpdate *AgentUpdateRequest `json:"agent_update"`
+	// ScanPolicy, when the server sends one with Managed set, means the server
+	// schedules this agent's scans (its scan policies): the agent stops running
+	// its own scan intervals and startup scans, and runs the policy scans the
+	// heartbeat issues (ScanRequest.Trigger "policy"). A server that predates
+	// scan policies omits it, and the agent keeps its own intervals.
+	ScanPolicy *ScanPolicy `json:"scan_policy,omitempty"`
+}
+
+// ScanPolicy is the agent's effective scan policy as far as the agent needs
+// it: whether the server schedules its scans, and which types it runs at all.
+// The schedules themselves stay on the server.
+type ScanPolicy struct {
+	Managed bool `json:"managed"`
+	// Policy is the policy's name, for logs.
+	Policy string `json:"policy,omitempty"`
+	// Scans maps a scan type (ScanType*) to whether the policy runs it. A type
+	// it doesn't list runs (the server lists every type it knows).
+	Scans map[string]ScanPolicyEntry `json:"scans,omitempty"`
+}
+
+// ScanPolicyEntry is one scan type in a ScanPolicy.
+type ScanPolicyEntry struct {
+	Enabled bool `json:"enabled"`
+}
+
+// IsManaged reports whether the server schedules scans (nil-safe).
+func (p *ScanPolicy) IsManaged() bool { return p != nil && p.Managed }
+
+// Enabled reports whether a managed policy runs scan type t at all.
+func (p *ScanPolicy) Enabled(t string) bool {
+	if p == nil {
+		return true
+	}
+	e, ok := p.Scans[t]
+	return !ok || e.Enabled
 }
 
 // AgentUpdateRequest asks the agent to update itself to Version. The server only
@@ -102,6 +137,11 @@ type HeartbeatRequest struct {
 // (HeartbeatResponse.ScanRequests) and reports its scans to POST /api/edr/scans.
 const CapabilityAdhocScans = "adhoc_scans"
 
+// CapabilityPolicyScans: the agent follows AgentConfig.ScanPolicy, so the
+// server may schedule its scans and issue them as ScanRequests with Trigger
+// "policy".
+const CapabilityPolicyScans = "policy_scans"
+
 // HeartbeatResponse tells the agent the current desired config version so it
 // knows whether to re-pull config, and carries pending on-demand scan requests.
 type HeartbeatResponse struct {
@@ -121,6 +161,8 @@ const (
 	ScanTriggerSchedule = "schedule"
 	ScanTriggerStartup  = "startup"
 	ScanTriggerConsole  = "console"
+	// ScanTriggerPolicy: a run the server's scan policy issued (a ScanRequest).
+	ScanTriggerPolicy = "policy"
 
 	ScanStatusRunning   = "running"
 	ScanStatusSucceeded = "succeeded"
@@ -130,11 +172,14 @@ const (
 	ScanStatusExpired   = "expired"
 )
 
-// ScanRequest is one on-demand scan the console asked for. ScanID is a
-// server-generated UUID; the agent runs a given ScanID at most once.
+// ScanRequest is one scan the server asks for: an on-demand scan from the
+// console, or (Trigger "policy") one the endpoint's scan policy made due.
+// ScanID is a server-generated UUID; the agent runs a given ScanID at most
+// once. A server that predates scan policies omits Trigger (console).
 type ScanRequest struct {
 	ScanID      string    `json:"scan_id"`
 	ScanType    string    `json:"scan_type"`
+	Trigger     string    `json:"trigger,omitempty"`
 	RequestedAt time.Time `json:"requested_at"`
 }
 

@@ -55,21 +55,29 @@ Request:
   "status": "online",
   "agent_version": "1.3.2",
   "update": { "request_id": "b6f1c2d0-...", "version": "1.4.0", "state": "installing", "error": "" },
-  "capabilities": ["adhoc_scans"]
+  "capabilities": ["adhoc_scans", "policy_scans"]
 }
 ```
 Response `200`:
 ```json
 {
   "config_version": 3,
-  "scan_requests": [{ "scan_id": "4c1e...", "scan_type": "vuln", "requested_at": "RFC3339" }]
+  "scan_requests": [
+    { "scan_id": "4c1e...", "scan_type": "vuln", "trigger": "console", "requested_at": "RFC3339" },
+    { "scan_id": "9a07...", "scan_type": "inventory", "trigger": "policy", "requested_at": "RFC3339" }
+  ]
 }
 ```
 
 `capabilities` lists optional features: `adhoc_scans` means the agent runs
-`scan_requests` and reports its scans (see [Scans](#post-apiedrscans)).
-`scan_requests` are the console's pending on-demand scans, oldest first;
-older servers omit it and older agents ignore it.
+`scan_requests` and reports its scans (see [Scans](#post-apiedrscans));
+`policy_scans` means it follows the config's `scan_policy`, so the server may
+schedule its scans (see [Scan policies](#scan-policies)).
+`scan_requests` are the pending scans the server asks for, oldest first:
+`trigger` `console` is an analyst's on-demand scan, `policy` one the
+endpoint's scan policy made due. A server that predates scan policies omits
+`trigger` (all console); older servers omit `scan_requests` and older agents
+ignore it.
 
 `update` is optional and present only while the agent has a self-update status to
 report (see [Agent self-update](#agent-self-update)). `state` is one of
@@ -90,9 +98,19 @@ Return the current `AgentConfig`.
   "rule_set_version": 12,
   "rules": ["<sigma rule yaml>", "..."],
   "yara_rules_version": 7,
-  "agent_update": { "version": "1.4.0", "request_id": "b6f1c2d0-..." }
+  "agent_update": { "version": "1.4.0", "request_id": "b6f1c2d0-..." },
+  "scan_policy": {
+    "managed": true,
+    "policy": "Servers",
+    "scans": { "vuln": { "enabled": true }, "yara": { "enabled": false },
+               "packages": { "enabled": true }, "inventory": { "enabled": true } }
+  }
 }
 ```
+
+`scan_policy` is sent by a server with scan policies (SIEMBox migration 054);
+see [Scan policies](#scan-policies). Without it, or with `managed: false`, the
+agent schedules its own scans from the interval fields.
 
 `agent_update` is `null` when no update is requested (see
 [Agent self-update](#agent-self-update)).
@@ -312,9 +330,11 @@ and ends: vulnerability (`vuln`), YARA (`yara`), package inventory
 
 - `status`: `running` at the start, then `succeeded` or `failed` (`error`,
   <= 500 chars, says why).
-- `scan_id` names a console request from `scan_requests`, or the row a
-  scheduled run's start report created. Without it (`trigger` `schedule` or
-  `startup`) the server creates a row and returns its id.
+- `scan_id` names a console or policy request from `scan_requests`, or the
+  row a scheduled run's start report created. Without it (`trigger`
+  `schedule` or `startup`) the server creates a row and returns its id.
+- `trigger`: `console` or `policy` for a request (the request's own trigger),
+  `schedule` or `startup` for the agent's own runs.
 - `summary`: flat, snake_case keys; numbers, booleans or short strings. The
   agent sends `findings` (vuln), `packages` (packages), `software` (inventory),
   `hits` / `new_hits` / `full` (yara), and `spooled: true` when the payload
@@ -345,8 +365,42 @@ payloads keep it.
   package and host inventories, and full YARA passes. The minute-by-minute
   incremental YARA passes are reported only when they find a new match.
 - A scanner the host lacks (grype missing; YARA, which needs osquery; the
-  package inventory turned off) fails an on-demand request with the reason.
-  Its scheduled runs are not reported.
+  package inventory turned off) fails an on-demand or policy request with
+  the reason. Its own scheduled runs are not reported.
+- A policy request runs like a console one (YARA reads every file), except
+  that the package inventory sends the full list only when it changed.
+
+### Scan policies
+
+With a SIEMBox server that has scan policies, *which* scans an endpoint runs
+and *when* is set on the server: a default policy, named policies assigned to
+endpoints, and per-endpoint overrides, each scan type with a calendar or
+fixed-interval schedule and an optional time window. The server keeps the
+schedules and decides when a scan is due; the agent never computes them.
+
+- The agent reports the `policy_scans` capability in every heartbeat. The
+  server then issues due scans as `scan_requests` with `trigger: "policy"`,
+  and the agent runs and reports them by `scan_id` like console requests.
+- `scan_policy.managed: true` in the config tells the agent the server
+  schedules its scans: it runs no startup scans and skips its own
+  `inventory_interval_seconds`, `vuln_scan_interval_seconds` and
+  package-inventory intervals (checked at every tick, so a config change
+  applies without a restart).
+- YARA: full passes come from the policy (no startup pass, and a rule update
+  does not force one; the next policy pass uses the new rules). While the
+  policy enables YARA, the per-minute pass keeps checking files changed since
+  the agent started; `scans.yara.enabled: false` stops it too.
+- `scans.<type>.enabled` is informational for the other types (the server
+  issues nothing for a disabled type). Console requests run whatever the
+  policy says.
+- At startup the agent re-reads the config even when `config_version` has not
+  moved, so an agent that self-updated into this feature picks `scan_policy`
+  up at once.
+- Offline: due times are checked on heartbeats, so nothing is queued for an
+  offline endpoint. When it reconnects, each scan that came due meanwhile runs
+  once (missed runs are not replayed), subject to its window.
+- An older agent (no `policy_scans`) ignores `scan_policy`; the server issues
+  it no policy scans and it keeps its own intervals.
 
 ## Server-side mapping summary
 

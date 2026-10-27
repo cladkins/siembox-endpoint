@@ -130,19 +130,27 @@ func (a *Agent) handleScanRequests(ctx context.Context, reqs []models.ScanReques
 
 	for _, r := range fresh {
 		r := r
+		trigger := models.ScanTriggerConsole
+		if r.Trigger == models.ScanTriggerPolicy {
+			trigger = models.ScanTriggerPolicy
+		}
 		if a.scanFunc(r.ScanType) == nil {
-			a.log.Warn("unknown on-demand scan type; reporting it failed", "scan_type", r.ScanType, "scan_id", r.ScanID)
+			a.log.Warn("unknown requested scan type; reporting it failed", "scan_type", r.ScanType, "scan_id", r.ScanID)
 			a.reportScan(ctx, models.ScanReport{
-				ScanID: r.ScanID, ScanType: r.ScanType, Trigger: models.ScanTriggerConsole,
+				ScanID: r.ScanID, ScanType: r.ScanType, Trigger: trigger,
 				Status: models.ScanStatusFailed, Error: "this agent version does not support scan type " + r.ScanType,
 			})
 			continue
 		}
-		a.log.Info("on-demand scan requested", "scan_type", r.ScanType, "scan_id", r.ScanID)
+		if trigger == models.ScanTriggerPolicy {
+			a.log.Info("scan due under the scan policy", "scan_type", r.ScanType, "scan_id", r.ScanID)
+		} else {
+			a.log.Info("on-demand scan requested", "scan_type", r.ScanType, "scan_id", r.ScanID)
+		}
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			a.runScan(ctx, r.ScanType, models.ScanTriggerConsole, []string{r.ScanID})
+			a.runScan(ctx, r.ScanType, trigger, []string{r.ScanID})
 		}()
 	}
 }
@@ -176,6 +184,8 @@ func (a *Agent) runScan(ctx context.Context, t, trigger string, ids []string) {
 			c.mu.Unlock()
 			return
 		}
+		// Queued ids (console or policy requests) share one run; each is
+		// reported by its id, so the trigger only shapes the run itself.
 		ids, st.queued = st.queued, nil
 		trigger = models.ScanTriggerConsole
 		c.mu.Unlock()
@@ -191,8 +201,9 @@ func (a *Agent) execScan(ctx context.Context, t, trigger string, ids []string) {
 	}
 	started := a.now().UTC()
 
-	// Console requests: tell the server they started; drop any it cancelled.
-	if trigger == models.ScanTriggerConsole {
+	// Requests (console or policy): tell the server they started; drop any it
+	// cancelled.
+	if requested(trigger) {
 		live := ids[:0:0]
 		for _, id := range ids {
 			resp, ok := a.reportScan(ctx, models.ScanReport{
@@ -225,7 +236,7 @@ func (a *Agent) execScan(ctx context.Context, t, trigger string, ids []string) {
 		// server; a console request is not re-run.
 		return
 	}
-	if errors.Is(err, errScanUnavailable) && trigger != models.ScanTriggerConsole {
+	if errors.Is(err, errScanUnavailable) && !requested(trigger) {
 		return
 	}
 	if len(ids) == 0 && !res.Record {
@@ -286,6 +297,12 @@ func (a *Agent) reportScan(ctx context.Context, r models.ScanReport) (models.Sca
 		return resp, false
 	}
 	return resp, true
+}
+
+// requested: a run the server asked for by id (a console or policy request),
+// as opposed to the agent's own scheduled or startup run.
+func requested(trigger string) bool {
+	return trigger == models.ScanTriggerConsole || trigger == models.ScanTriggerPolicy
 }
 
 // scanAvailable: whether this host can run scan type t at all.

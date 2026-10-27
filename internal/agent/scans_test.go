@@ -27,6 +27,7 @@ type fakeScanServer struct {
 	scansCode  int                                               // non-zero: answer /scans with this status
 	startReply func(models.ScanReport) models.ScanReportResponse // nil: accept
 	requests   []models.ScanRequest                              // served in every heartbeat
+	config     models.AgentConfig                                // served by GET .../config
 	heartbeats []models.HeartbeatRequest
 	reports    []models.ScanReport
 	packages   []models.PackageReport
@@ -50,6 +51,8 @@ func (f *fakeScanServer) handler(t *testing.T) http.HandlerFunc {
 		}
 		dec := json.NewDecoder(body)
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/config"):
+			json.NewEncoder(w).Encode(f.config)
 		case strings.HasSuffix(r.URL.Path, "/heartbeat"):
 			var hb models.HeartbeatRequest
 			_ = dec.Decode(&hb)
@@ -135,7 +138,7 @@ func TestConsoleRequestRunsOnceAndIsReported(t *testing.T) {
 	a.heartbeat(ctx)
 	a.scans.wg.Wait()
 
-	if len(fake.heartbeats) != 2 || len(fake.heartbeats[0].Capabilities) != 1 || fake.heartbeats[0].Capabilities[0] != models.CapabilityAdhocScans {
+	if len(fake.heartbeats) != 2 || strings.Join(fake.heartbeats[0].Capabilities, ",") != models.CapabilityAdhocScans+","+models.CapabilityPolicyScans {
 		t.Fatalf("heartbeat capabilities: %+v", fake.heartbeats)
 	}
 	if len(fake.packages) != 1 || !fake.packages[0].Force || fake.packages[0].ScanID != "req-1" || len(fake.packages[0].Packages) != 1 {
