@@ -18,6 +18,7 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/detect"
 	"github.com/cladkins/siembox-endpoint/internal/detect/yara"
 	"github.com/cladkins/siembox-endpoint/internal/inventory"
+	"github.com/cladkins/siembox-endpoint/internal/metrics"
 	"github.com/cladkins/siembox-endpoint/internal/models"
 	"github.com/cladkins/siembox-endpoint/internal/packages"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry"
@@ -95,6 +96,11 @@ type Agent struct {
 	yaraForceFull bool
 	// runYara runs one osqueryi YARA pass (osquery.RunYaraScan; tests swap it).
 	runYara func(context.Context, string, osquery.YaraScan) ([]telemetry.Record, error)
+
+	// Performance metrics (performance.go): the collector (nil on an OS
+	// without one) and the unsent buffer.
+	perf      *metrics.Collector
+	perfState perfState
 }
 
 // New constructs an Agent from loaded state. The transport client is created
@@ -110,7 +116,13 @@ func New(state *config.State, spool *transport.Spool, log *slog.Logger) (*Agent,
 	if err != nil {
 		return nil, err
 	}
+	perf, err := metrics.New()
+	if err != nil {
+		log.Info("performance metrics unavailable on this OS", "err", err)
+		perf = nil
+	}
 	return &Agent{
+		perf:             perf,
 		updater:          update.New(update.Options{State: state, Log: log}),
 		state:            state,
 		client:           client,
@@ -259,6 +271,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	run(func() { a.batchEvents(ctx, events) })
 	run(func() { a.runDetection(ctx, events) })
 	run(func() { a.runYaraScans(ctx) })
+	run(func() { a.runPerformance(ctx) })
 
 	<-ctx.Done()
 	a.log.Info("shutting down")
@@ -567,11 +580,15 @@ func (a *Agent) syncYaraRules(ctx context.Context) {
 
 func (a *Agent) heartbeat(ctx context.Context) {
 	a.updater.CheckPending()
+	caps := []string{models.CapabilityAdhocScans, models.CapabilityPolicyScans}
+	if a.perfCapable() {
+		caps = append(caps, models.CapabilityPerfMetrics)
+	}
 	resp, err := a.client.Heartbeat(ctx, models.HeartbeatRequest{
 		Status:       "online",
 		AgentVersion: version.Version,
 		Update:       a.updater.Report(),
-		Capabilities: []string{models.CapabilityAdhocScans, models.CapabilityPolicyScans},
+		Capabilities: caps,
 	})
 	if err != nil {
 		a.log.Debug("heartbeat failed", "err", err)

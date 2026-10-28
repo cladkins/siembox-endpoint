@@ -12,6 +12,7 @@
 //	scan                one-shot vulnerability scan, print JSON (no server)
 //	check               one-shot detection check, print JSON (no server)
 //	packages            one-shot installed-package inventory, print JSON (no server)
+//	metrics             one-shot performance sample + top processes, print JSON (no server)
 //	version             print the agent version
 package main
 
@@ -32,6 +33,7 @@ import (
 	"github.com/cladkins/siembox-endpoint/internal/config"
 	"github.com/cladkins/siembox-endpoint/internal/detect"
 	"github.com/cladkins/siembox-endpoint/internal/detect/yara"
+	"github.com/cladkins/siembox-endpoint/internal/metrics"
 	"github.com/cladkins/siembox-endpoint/internal/models"
 	"github.com/cladkins/siembox-endpoint/internal/packages"
 	"github.com/cladkins/siembox-endpoint/internal/telemetry/osquery"
@@ -76,11 +78,13 @@ func dispatch(cmd, dir string, log *slog.Logger) error {
 		return runCheck(dir, log)
 	case "packages":
 		return runPackages(log)
+	case "metrics":
+		return runMetrics()
 	case "run", "install", "uninstall", "start", "stop", "restart", "status":
 		return runService(cmd, dir, log)
 	default:
 		fmt.Fprintf(os.Stderr, "usage: siembox-agent [-dir DIR] [-v] "+
-			"(run|install|uninstall|start|stop|restart|status|scan|check|packages|version)\n")
+			"(run|install|uninstall|start|stop|restart|status|scan|check|packages|metrics|version)\n")
 		os.Exit(2)
 		return nil
 	}
@@ -321,6 +325,30 @@ func runPackages(log *slog.Logger) error {
 		SnapshotHash string           `json:"snapshot_hash"`
 		Packages     []models.Package `json:"packages"`
 	}{packages.Hash(res.Packages), res.Packages})
+}
+
+// runMetrics takes one performance sample over a 2-second window (and the
+// top processes over the same window) and prints them, as the agent would
+// send them to POST /api/edr/metrics.
+func runMetrics() error {
+	c, err := metrics.New()
+	if err != nil {
+		return err
+	}
+	c.Prime(true)
+	time.Sleep(2 * time.Second)
+	s, err := c.Sample()
+	if err != nil {
+		return err
+	}
+	snap, err := c.Processes(metrics.DefaultTopProcesses, s.MemTotal)
+	if err != nil {
+		return err
+	}
+	return printJSON(struct {
+		Sample    models.MetricSample     `json:"sample"`
+		Processes *models.ProcessSnapshot `json:"processes"`
+	}{s, snap})
 }
 
 // osqueryiBinary derives the osqueryi path from a configured binary. If an

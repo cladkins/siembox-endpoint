@@ -1,0 +1,10 @@
+sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+/dev/sda2 / ext4 rw,relatime 0 0
+tmpfs /run tmpfs rw,nosuid,nodev,size=812000k 0 0
+/dev/sda1 /boot/efi vfat rw,relatime 0 0
+/dev/loop3 /snap/core22/1612 squashfs ro,nodev,relatime 0 0
+/dev/sdb1 /mnt/backup\040disk xfs rw,relatime 0 0
+/dev/sda2 /var/lib/docker/bind ext4 rw,relatime 0 0
+nas:/export /mnt/nas nfs4 rw,relatime 0 0
+overlay /var/lib/docker/overlay2/abc/merged overlay rw,relatime 0 0

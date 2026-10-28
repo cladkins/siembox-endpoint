@@ -43,6 +43,23 @@ type Settings struct {
 	// re-read. 0 means DefaultPackageInventoryIntervalSec; values under
 	// MinPackageInventoryIntervalSec are raised to it.
 	PackageInventoryIntervalSec int `json:"package_inventory_interval_seconds,omitempty"`
+	// PerformanceMetrics turns machine performance reporting (CPU, memory,
+	// disks, load, uptime, network; POST /api/edr/metrics) on or off. Unset
+	// means on. Off here wins over the server's scan policy.
+	PerformanceMetrics *bool `json:"performance_metrics,omitempty"`
+	// PerformanceProcesses turns the top-processes part of it on or off.
+	// Unset means on (the server's policy can still turn it off).
+	PerformanceProcesses *bool `json:"performance_processes,omitempty"`
+}
+
+// PerformanceMetricsEnabled reports whether performance metrics may run (default on).
+func (s Settings) PerformanceMetricsEnabled() bool {
+	return s.PerformanceMetrics == nil || *s.PerformanceMetrics
+}
+
+// PerformanceProcessesEnabled reports whether process sampling may run (default on).
+func (s Settings) PerformanceProcessesEnabled() bool {
+	return s.PerformanceProcesses == nil || *s.PerformanceProcesses
 }
 
 // Package inventory schedule bounds.
